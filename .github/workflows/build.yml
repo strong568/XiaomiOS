@@ -58,7 +58,7 @@ jobs:
       - name: Install Stuff
         run: |
           sudo bash setup.sh
-        
+          
       - name: Giving permission
         run: |
           sudo chmod 777 -R *
@@ -69,6 +69,11 @@ jobs:
         run: |
           sudo -E bash build.sh "$INPUT_URL" "${{ github.repository }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
 
+      - name: Pack ROM...
+        run: |
+          python notify.py pack "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
+          sudo bash packROM.sh
+
       - name: Setup rclone config and SSH key
         run: |
           # 1. Cài đặt cho user runner
@@ -78,7 +83,7 @@ jobs:
           echo "${{ secrets.SF_SSH_KEY }}" > /home/runner/.ssh/sf_upload_key
           chmod 600 /home/runner/.ssh/sf_upload_key
           
-          # 2. Copy cấu hình sang cho user root (bắt buộc vì lệnh upload chạy qua sudo)
+          # 2. Copy cấu hình sang cho user root
           sudo mkdir -p /root/.config/rclone
           sudo cp /home/runner/.config/rclone/rclone.conf /root/.config/rclone/rclone.conf
           sudo mkdir -p /root/.ssh
@@ -89,7 +94,7 @@ jobs:
         run: |
           python notify.py upload "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
           sudo -E bash uploadROM.sh
-      
+        
       - name: Success Notification
         if: success()
         run: |
@@ -99,4 +104,3 @@ jobs:
         if: failure()
         run: |
           python notify.py fail "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
-          
