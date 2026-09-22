@@ -1,6 +1,6 @@
 
 #!/bin/bash
-echo "Welcome to PenguinOS Fastboot ROM Installer for macOS"
+echo "Welcome to BugOS Fastboot ROM Installer for macOS"
 cd "$(dirname "$0")" || exit 1
 
 # Define commands
