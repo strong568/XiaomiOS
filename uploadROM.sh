@@ -2,9 +2,10 @@ work_dir=$(pwd)
 source $work_dir/functions.sh
 RCLONE_CONFIG_1DRIVE="$work_dir/rclone.conf"
 
-# Cấu hình Google Drive 
-GDRIVE_REMOTE="gdrive"
-GDRIVE_FOLDER="PenguinOS_Releases" 
+# Cấu hình SourceForge
+SF_REMOTE="sourceforge"                        # tên remote khai báo trong rclone.conf (backend: sftp)
+SF_PROJECT="hyperos"                         # tên project của bạn trên SourceForge
+SF_BASE_PATH="/home/frs/project/${SF_PROJECT}" # đường dẫn gốc File Release System của SourceForge
 
 os_type=$(cat $work_dir/bin/ddevice/os_type.txt 2>/dev/null)
 base_rom_code=$(cat $work_dir/bin/ddevice/base_rom_code.txt 2>/dev/null)
@@ -15,7 +16,7 @@ baserom_type=$(cat $work_dir/bin/ddevice/romtype.txt 2>/dev/null)
 
 # ƯU TIÊN LẤY CODENAME CHUẨN ĐÃ ĐƯỢC XỬ LÝ
 device_f=$(cat $work_dir/bin/ddevice/device_f.txt 2>/dev/null)
-if [[ -z "$device_f" || "$device_f" == "missi" ]]; then
+if [[ -z "$device_f" || "$device_f" == "missing" ]]; then
     device_f=$(cat $work_dir/bin/ddevice/device_code.txt 2>/dev/null)
 fi
 device_code="$device_f"
@@ -25,7 +26,7 @@ if [[ $(git branch --show-current) == "beta" ]]; then
     status="Development"
 else
     polyxver="$(cat Version)"
-    status="Official"
+    status="UnOfficial"
 fi
 
 # ========================================================
@@ -84,7 +85,7 @@ hash=$(md5sum "out/${os_type}_${device_f}_${base_rom_code}.zip" | head -c 5)
 final_zip_name="${os_type}_${polyxver}_${device_f}_${base_rom_code}_${hash}_${status}.zip"
 mv "out/${os_type}_${device_f}_${base_rom_code}.zip" "out/$final_zip_name"
 
-repack "Build completed"    
+repack "Build completed"
 repack "Output: $(pwd)/out/$final_zip_name"
 upload "Uploading"
 output_file="out/$final_zip_name"
@@ -92,20 +93,29 @@ echo "$final_zip_name" > $work_dir/bin/ddevice/output_zip.txt
 
 uploaddir=$true_os
 
-# Upload thẳng lên Google Drive theo thư mục codename chuẩn (peridot)
-upload "Uploading to Google Drive..."
-rclone -v --config="$RCLONE_CONFIG_1DRIVE" copy "$output_file" "$GDRIVE_REMOTE:$GDRIVE_FOLDER/${uploaddir}/${polyxver}/${device_f}/" \
-    --drive-chunk-size 128M \
-    --tpslimit 4 \
+# ============================================================
+# Upload lên SourceForge (File Release System) qua rclone SFTP
+# ============================================================
+sf_remote_path="${SF_BASE_PATH}/${uploaddir}/${polyxver}/${device_f}"
+
+upload "Uploading to SourceForge..."
+rclone -v --config="$RCLONE_CONFIG_1DRIVE" copy "$output_file" "${SF_REMOTE}:${sf_remote_path}/" \
+    --sftp-set-modtime=false \
+    --transfers 1 \
     --retries 3 \
-    --timeout 15m \
-    --contimeout 15m || {
-    upload "Lỗi khi upload file lên Google Drive!"
+    --timeout 30m \
+    --contimeout 1m || {
+    upload "Lỗi khi upload file lên SourceForge!"
     exit 1
 }
+
+# Link tải trực tiếp trên SourceForge (dùng cho nút Telegram nếu có)
+sf_download_url="https://sourceforge.net/projects/${SF_PROJECT}/files/${uploaddir}/${polyxver}/${device_f}/${final_zip_name}/download"
+echo "$sf_download_url" > $work_dir/bin/ddevice/output_url.txt
 
 upload "Clean Workflow.."
 rm -rf $work_dir/out
 rm -rf $work_dir/build
 
 upload "Build ${os_type}_${polyxver} for ${device_f} successful!"
+upload "Download: $sf_download_url"
