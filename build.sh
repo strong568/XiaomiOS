@@ -14,10 +14,10 @@ source $work_dir/functions.sh
 
 if [[ $(git branch --show-current) == "beta" ]]; then
     polyxver="$(cat Version)"
-	status="Development"
+    status="Development"
 else
     polyxver="$(cat Version)"
-	status="Official"
+    status="Official"
 fi
 
 # Fix lỗi cấu hình gói apt/dpkg và cài đặt các phụ thuộc cần thiết
@@ -162,12 +162,12 @@ for prop in $prop_files; do
     fi
 done
 
-# Ưu tiên 2: Nếu vẫn rỗng, bóc từ tên file zip (Đã bổ sung đa dạng các dòng máy Xiaomi/Redmi/POCO)
+# Ưu tiên 2: Nếu vẫn rỗng, bóc từ tên file zip (Đã bổ sung đa dạng các dòng máy)
 if [[ -z "$detected_codename" || "$detected_codename" == "missi" ]]; then
     detected_codename=$(echo "$baserom" | grep -o -i -E "(alioth|marble|fuxi|nuwa|ishtar|peridot|onyx|garnet|corot|duchamp|manet|houji|shennong|aurora|aristotle|carmel|sweet|munch|rubens|matisse|thor|zizhan|babylon|renoir|odin|vili|spongie)" | head -n 1 | tr '[:upper:]' '[:lower:]')
 fi
 
-# Ưu tiên 3: Gán giá trị an toàn. Nếu quét hụt, gán "unknown" để script tiếp tục chạy thay vì báo lỗi "Không tìm thấy key"
+# Ưu tiên 3: Gán giá trị an toàn
 if [[ -n "$detected_codename" && "$detected_codename" != "missi" ]]; then
     device_f="$detected_codename"
 else
