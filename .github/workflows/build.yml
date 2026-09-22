@@ -1,4 +1,4 @@
-name: PenguinOS ROM Build
+name: BugOS ROM Build
 
 on:
   workflow_dispatch:
@@ -75,6 +75,11 @@ jobs:
         run: |
           python notify.py pack "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
           sudo bash packROM.sh
+
+      - name: Setup SourceForge SSH key
+        run: |
+          echo "${{ secrets.SF_SSH_KEY }}" > sf_upload_key
+          chmod 600 sf_upload_key
 
       - name: Setup Rclone...
         run: |
