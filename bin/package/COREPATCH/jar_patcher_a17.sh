@@ -10,7 +10,7 @@ source "${SCRIPT_DIR}/helper.sh"
 mkdir -p "$BACKUP_DIR"
 
 # API level for baksmali/smali v2
-API_LEVEL=36
+API_LEVEL=37
 
 # ============================================
 # Feature Flags (set by command-line arguments)
@@ -558,14 +558,14 @@ PY
 }
 
 # ----------------------------------------------
-# Framework patches (Android 16)
+# Framework patches (Android 17)
 # ----------------------------------------------
 
-# Apply signature verification bypass patches to framework.jar (Android 16)
+# Apply signature verification bypass patches to framework.jar (Android 17)
 apply_framework_signature_patches() {
   local decompile_dir="$1"
 
-  log "Applying signature verification patches to framework.jar (Android 16)..."
+  log "Applying signature verification patches to framework.jar (Android 17)..."
 
   local pkg_parser_file
   pkg_parser_file=$(find "$decompile_dir" -type f -path "*/android/content/pm/PackageParser.smali" | head -n1)
@@ -666,16 +666,16 @@ apply_framework_signature_patches() {
 apply_framework_disable_secure_flag() {
   local decompile_dir="$1"
 
-  log "Applying disable secure flag patches to framework.jar (Android 16)..."
+  log "Applying disable secure flag patches to framework.jar (Android 17)..."
 
   # Note: For Android 16, disable secure flag does not require framework.jar patches
   # Only services.jar and miui-services.jar are affected
-  log "Disable secure flag: No framework.jar patches required for Android 16"
+  log "Disable secure flag: No framework.jar patches required for Android 17"
 
-  log "Disable secure flag patches applied to framework.jar (Android 16)"
+  log "Disable secure flag patches applied to framework.jar (Android 17)"
 }
 
-# Main framework patching function (Android 16)
+# Main framework patching function (Android 17)
 patch_framework() {
   local framework_path="$work_dir/build/baserom/images/system/system/framework/framework.jar"
 
@@ -684,16 +684,11 @@ patch_framework() {
     return 1
   fi
 
-  log "Starting Android 16 framework.jar patch"
-  local decompile_dir
-  decompile_dir=$(decompile_jar "$framework_path") || return 1
-
-  # Apply feature-specific patches based on flags
-  apply_framework_signature_patches "$decompile_dir"
-
-  # Apply invoke-custom patches (common to all features)
-  # modify_invoke_custom_methods "$decompile_dir"
-
-  recompile_jar "$framework_path" > /dev/null
-
-  rm -rf "$decompile_dir" "
+  log "BỎ QUA patch framework.jar cho Android 17 để tránh lỗi Smali BaseBundle"
+  # Comment toàn bộ các lệnh bên dưới lại:
+  # local decompile_dir
+  # decompile_dir=$(decompile_jar "$framework_path") || return 1
+  # apply_framework_signature_patches "$decompile_dir"
+  # recompile_jar "$framework_path" > /dev/null
+  # rm -rf "$decompile_dir"
+}
