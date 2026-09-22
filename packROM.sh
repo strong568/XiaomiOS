@@ -92,6 +92,27 @@ fi
 if [[ "$is_ab_device" == false ]]; then
     repack "Packing super.img for A-only device"
     
+    # [BỔ SUNG] Tăng mạnh margin lên 2GB (2147483648 bytes) cho A-only
+    extra_margin=2147483648
+    superSize=$((superSize + extra_margin))
+    
+    # Giảm margin an toàn gốc từ 256MB xuống 10MB để tối ưu không gian
+    GROUP_SIZE=$((superSize - 10485760))   
+    
+    lpargs="-F --output build/baserom/images/super.img --metadata-size 65536 --super-name super --metadata-slots 2 --block-size 4096 --device super:$superSize --group=qti_dynamic_partitions:$GROUP_SIZE"
+    
+    for pname in odm mi_ext system system_ext product vendor; do
+        if [ -f "build/baserom/images/${pname}.img" ]; then
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                subsize=$(stat -f%z "build/baserom/images/${pname}.img")
+            else
+                subsize=$(du -sb "build/baserom/images/${pname}.img" | awk '{print $1}')
+            fi
+            repack "Super sub-partition [$pname] size: [$subsize]"
+            lpargs="$lpargs --partition ${pname}:readonly:${subsize}:qti_dynamic_partitions --image ${pname}=build/baserom/images/${pname}.img"
+        fi
+    done
+    
     # [BỔ SUNG] Ép tăng dung lượng
     extra_margin=524288000
     superSize=$((superSize + extra_margin))
@@ -114,12 +135,9 @@ if [[ "$is_ab_device" == false ]]; then
 else
     repack "Packing super.img for V-AB device"
     
-    # [BỔ SUNG] Ép tăng dung lượng Super thêm 500MB để tránh lỗi tràn dung lượng trên OS4/Android 17
+    # [BỔ SUNG] Ép tăng dung lượng Super
     extra_margin=524288000
     superSize=$((superSize + extra_margin))
-    
-    # Giảm margin an toàn từ 256MB xuống 10MB (10485760 bytes) để tối đa hóa không gian
-    GROUP_SIZE=$((superSize - 10485760))
     
     lpargs="-F --virtual-ab --output $work_dir/build/baserom/images/super.img --metadata-size 65536 --super-name super --metadata-slots 3 --block-size 4096 --device super:$superSize --group=qti_dynamic_partitions_a:$GROUP_SIZE --group=qti_dynamic_partitions_b:$GROUP_SIZE"
     
