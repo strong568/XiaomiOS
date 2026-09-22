@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       input_url:
-        description: 'URL of the ROM to build'
+        description: 'URL của Rom'
         required: true
       builder_name:
-        description: 'Tên người build'
+        description: 'iabi'
         required: false
       builder_id:
-        description: 'ID người build'
+        description: 'iabi'
         required: false
       
 jobs:
