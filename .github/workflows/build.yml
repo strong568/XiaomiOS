@@ -79,11 +79,16 @@ jobs:
           echo "${{ secrets.SF_SSH_KEY }}" > sf_upload_key
           chmod 600 sf_upload_key
 
-      - name: Setup Rclone...
+      - name: Setup Rclone and SSH Key
         run: |
-          cat << 'EOF' > rclone.conf
-          ${{ secrets.RCLONE_DRIVE_CONFIG }}
-          EOF
+          # 1. Tạo thư mục rclone và ghi file cấu hình
+          mkdir -p ~/.config/rclone
+          echo "${{ secrets.RCLONE_CONFIG_DATA }}" > ~/.config/rclone/rclone.conf
+          
+          # 2. Tạo thư mục ssh, ghi file chìa khóa và cấp quyền
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SF_SSH_KEY }}" > ~/.ssh/sf_upload_key
+          chmod 600 ~/.ssh/sf_upload_key
 
       - name: Setup rclone config and SSH key
         run: |
