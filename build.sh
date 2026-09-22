@@ -154,20 +154,24 @@ done
 # ==================== FIX TÊN CODENAME THIẾT BỊ ====================
 detected_codename=""
 
-# Ưu tiên 1: Lấy từ product/etc/build.prop hoặc vendor (chứa codename máy thật, tránh chữ missing của system)
-if [ -f "$work_dir/build/baserom/images/product/etc/build.prop" ]; then
-    detected_codename=$(grep -m1 "^ro.product.product.device=" "$work_dir/build/baserom/images/product/etc/build.prop" | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
-elif [ -f "$work_dir/build/baserom/images/vendor/build.prop" ]; then
-    detected_codename=$(grep -m1 "^ro.product.vendor.device=" "$work_dir/build/baserom/images/vendor/build.prop" | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
-fi
+# Ưu tiên 1: Quét TẤT CẢ các file build.prop có trong ROM để bắt mọi từ khóa có thể
+prop_files=$(find $work_dir/build/baserom/images/ -type f -name "*.prop")
+for prop in $prop_files; do
+    if [[ -z "$detected_codename" || "$detected_codename" == "missi" ]]; then
+        detected_codename=$(grep -m1 -E "^ro\.product\.(vendor\.|product\.|system\.)?device=|^ro\.build\.product=" "$prop" | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
+    fi
+done
 
-# Ưu tiên 2: Nếu lấy ra missing hoặc rỗng thì bóc thẳng từ chuỗi baserom/tên file zip
+# Ưu tiên 2: Nếu vẫn rỗng, bóc từ tên file zip (Đã bổ sung đa dạng các dòng máy Xiaomi/Redmi/POCO)
 if [[ -z "$detected_codename" || "$detected_codename" == "missi" ]]; then
-    detected_codename=$(echo "$baserom" | grep -o -i -E "(peridot|onyx|garnet|corot|duchamp|manet|houji|shennong)" | head -n 1 | tr '[:upper:]' '[:lower:]')
+    detected_codename=$(echo "$baserom" | grep -o -i -E "(alioth|marble|fuxi|nuwa|ishtar|peridot|onyx|garnet|corot|duchamp|manet|houji|shennong|aurora|aristotle|carmel|sweet|munch|rubens|matisse|thor|zizhan|babylon|renoir|odin|vili|spongie)" | head -n 1 | tr '[:upper:]' '[:lower:]')
 fi
 
-if [ -n "$detected_codename" ]; then
+# Ưu tiên 3: Gán giá trị an toàn. Nếu quét hụt, gán "unknown" để script tiếp tục chạy thay vì báo lỗi "Không tìm thấy key"
+if [[ -n "$detected_codename" && "$detected_codename" != "missi" ]]; then
     device_f="$detected_codename"
+else
+    device_f="unknown_device"
 fi
 
 echo "$device_f" > $work_dir/bin/ddevice/device_f.txt
