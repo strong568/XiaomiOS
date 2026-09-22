@@ -154,14 +154,14 @@ done
 # ==================== FIX TÊN CODENAME THIẾT BỊ ====================
 detected_codename=""
 
-# Ưu tiên 1: Lấy từ product/etc/build.prop hoặc vendor (chứa codename máy thật, tránh chữ missi của system)
+# Ưu tiên 1: Lấy từ product/etc/build.prop hoặc vendor (chứa codename máy thật, tránh chữ missing của system)
 if [ -f "$work_dir/build/baserom/images/product/etc/build.prop" ]; then
     detected_codename=$(grep -m1 "^ro.product.product.device=" "$work_dir/build/baserom/images/product/etc/build.prop" | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
 elif [ -f "$work_dir/build/baserom/images/vendor/build.prop" ]; then
     detected_codename=$(grep -m1 "^ro.product.vendor.device=" "$work_dir/build/baserom/images/vendor/build.prop" | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
 fi
 
-# Ưu tiên 2: Nếu lấy ra missi hoặc rỗng thì bóc thẳng từ chuỗi baserom/tên file zip
+# Ưu tiên 2: Nếu lấy ra missing hoặc rỗng thì bóc thẳng từ chuỗi baserom/tên file zip
 if [[ -z "$detected_codename" || "$detected_codename" == "missi" ]]; then
     detected_codename=$(echo "$baserom" | grep -o -i -E "(peridot|onyx|garnet|corot|duchamp|manet|houji|shennong)" | head -n 1 | tr '[:upper:]' '[:lower:]')
 fi
@@ -179,7 +179,7 @@ if [ -f "$baserom" ]; then rm -rf "$baserom"; fi
 rm -rf build/baserom/payload.bin build/baserom/super.img
 
 # Kỹ thuật ép tên: Làm sạch hậu tố NT/INT và ép về tên thương hiệu riêng
-MY_BRAND_NAME="PenguinOS"
+MY_BRAND_NAME="BugOS"
 echo "$MY_BRAND_NAME" > $work_dir/bin/ddevice/os_type.txt
 echo "$MY_BRAND_NAME" > $work_dir/bin/ddevice/rom_os.txt
 echo "$MY_BRAND_NAME" > $work_dir/bin/ddevice/brand.txt
@@ -215,12 +215,12 @@ else
     find "$work_dir/build/baserom/images/" -type f -name "*.prop" -exec sed -i 's/MIUINT/MIUI/g' {} +
     find "$work_dir/build/baserom/images/" -type f -name "*.prop" -exec sed -i 's/HyperNT/HyperOS/g' {} +
 
-    # ----> ĐÓNG DẤU BẢN QUYỀN PENGUINOS <----
-    info "Đang đóng dấu bản quyền PenguinOS..."
-    find "$work_dir/build/baserom/images/" -type f -name "*.prop" -exec sed -i 's/^ro.build.display.id=.*/ro.build.display.id=PenguinOS 1.2/g' {} +
-    find "$work_dir/build/baserom/images/" -type f -name "*.prop" -exec sed -i 's/^ro.build.version.incremental=.*/ro.build.version.incremental=PenguinOS 1.2/g' {} +
-    find "$work_dir/build/baserom/images/" -type f -name "*.prop" -exec sed -i 's/^ro.mi.os.version.name=.*/ro.mi.os.version.name=PenguinOS 1.2/g' {} +
-    find "$work_dir/build/baserom/images/" -type f -name "*.prop" -exec sed -i 's/^ro.mi.os.version.incremental=.*/ro.mi.os.version.incremental=PenguinOS 1.2/g' {} +
+    # ----> ĐÓNG DẤU BẢN QUYỀN BUGOS <----
+    info "Đang đóng dấu bản quyền BUGOS..."
+    find "$work_dir/build/baserom/images/" -type f -name "*.prop" -exec sed -i 's/^ro.build.display.id=.*/ro.build.display.id=BUGOS 1.0/g' {} +
+    find "$work_dir/build/baserom/images/" -type f -name "*.prop" -exec sed -i 's/^ro.build.version.incremental=.*/ro.build.version.incremental=BUGOS 1.0/g' {} +
+    find "$work_dir/build/baserom/images/" -type f -name "*.prop" -exec sed -i 's/^ro.mi.os.version.name=.*/ro.mi.os.version.name=BUGOS 1.0/g' {} +
+    find "$work_dir/build/baserom/images/" -type f -name "*.prop" -exec sed -i 's/^ro.mi.os.version.incremental=.*/ro.mi.os.version.incremental=BUGOS 1.0/g' {} +
 fi
 
 find "$work_dir/build/baserom/images/" -exec touch -t 200901010000.00 {} + 2> /dev/null || true
