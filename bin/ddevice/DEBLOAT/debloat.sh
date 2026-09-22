@@ -5,7 +5,18 @@ debloat_apps=()
 while IFS= read -r line || [[ -n "$line" ]]; do
     debloat_apps+=("$line")
 done < $WORK_DIR/bin/ddevice/DEBLOAT/APPLIST.txt
+# Xóa Trình duyệt Mi (Mi Browser) ~ 150MB
+rm -rf $work_dir/build/baserom/images/product/app/MiuiBrowser
 
+# Xóa Mi Video ~ 100MB
+rm -rf $work_dir/build/baserom/images/product/app/MiVideo
+rm -rf $work_dir/build/baserom/images/product/app/MiuiVideo
+
+# Xóa các app cài sẵn của bên thứ 3 (TikTok, Game rác, v.v. của TQ)
+rm -rf $work_dir/build/baserom/images/product/data-app/*
+
+# Xóa Mi Music (Nếu không xài) ~ 80MB
+rm -rf $work_dir/build/baserom/images/product/app/MiuiMusic
 rm -rf $WORK_DIR/build/baserom/images/product/etc/auto-install*
 rm -rf $WORK_DIR/build/baserom/images/product/app/Updater
 rm -rf $WORK_DIR/build/baserom/images/product/etc/permissions/cn.google.services.xml
