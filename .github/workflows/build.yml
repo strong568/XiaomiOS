@@ -84,6 +84,14 @@ jobs:
           cat << 'EOF' > rclone.conf
           ${{ secrets.RCLONE_DRIVE_CONFIG }}
           EOF
+
+      - name: Setup rclone config and SSH key
+        run: |
+          mkdir -p ~/.config/rclone
+          echo "${{ secrets.RCLONE_CONFIG_DATA }}" > ~/.config/rclone/rclone.conf
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SF_UPLOAD_KEY }}" > ~/.ssh/sf_upload_key
+          chmod 600 ~/.ssh/sf_upload_key
           
       - name: Upload ROM...
         run: |
