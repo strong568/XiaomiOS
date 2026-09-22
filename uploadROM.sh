@@ -4,7 +4,7 @@ RCLONE_CONFIG_1DRIVE="$work_dir/rclone.conf"
 
 # Cấu hình SourceForge
 SF_REMOTE="sourceforge"                        # tên remote khai báo trong rclone.conf (backend: sftp)
-SF_PROJECT="hyperos"                         # tên project của bạn trên SourceForge
+SF_PROJECT="iabi"                         # tên project của bạn trên SourceForge
 SF_BASE_PATH="/home/frs/project/${SF_PROJECT}" # đường dẫn gốc File Release System của SourceForge
 
 os_type=$(cat $work_dir/bin/ddevice/os_type.txt 2>/dev/null)
@@ -81,8 +81,19 @@ zip -r "${os_type}_${device_f}_${base_rom_code}.zip" ./*
 mv "${os_type}_${device_f}_${base_rom_code}.zip" ../
 popd || exit
 
-hash=$(md5sum "out/${os_type}_${device_f}_${base_rom_code}.zip" | head -c 5)
-final_zip_name="${os_type}_${polyxver}_${device_f}_${base_rom_code}_${hash}_${status}.zip"
+# 1. Lấy ngày tháng năm hiện tại (YYYYMMDD)
+current_date=$(date +"%Y%m%d")
+
+# 2. In hoa tên thiết bị (ví dụ: onyx -> ONYX)
+device_upper=$(echo "$device_f" | tr '[:lower:]' '[:upper:]')
+
+# 3. Xóa chữ "OS" ở đầu mã ROM (ví dụ: OS3.0.305.0 -> 3.0.305.0)
+clean_rom_code=${base_rom_code#OS}
+
+# 4. Ghép thành tên file chuẩn theo yêu cầu
+final_zip_name="BugOS_1.0_${device_upper}_${clean_rom_code}_${current_date}.zip"
+
+# Đổi tên file zip
 mv "out/${os_type}_${device_f}_${base_rom_code}.zip" "out/$final_zip_name"
 
 repack "Build completed"
