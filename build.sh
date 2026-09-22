@@ -197,9 +197,6 @@ python3 $work_dir/notify.py build "$repo_name" "$baserom" "$prefix_id" "$builder
 bash $work_dir/bin/ddevice/DEBLOAT/debloat.sh
 info "Done"
 
-bash $work_dir/bin/modfile/OS1/insmod.sh
-bash $work_dir/bin/modfile/OS2/insmod.sh
-bash $work_dir/bin/modfile/OS3/insmod.sh
 bash $work_dir/bin/modfile/Universal/insfile.sh
 bash $work_dir/bin/modfile/UpdateFile/insupdate.sh
 bash $work_dir/bin/package/patchpackage.sh
