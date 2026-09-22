@@ -92,12 +92,12 @@ fi
 if [[ "$is_ab_device" == false ]]; then
     repack "Packing super.img for A-only device"
     
-    # [BỔ SUNG] Tăng mạnh margin lên 2GB (2147483648 bytes) cho A-only
-    extra_margin=2147483648
-    superSize=$((superSize + extra_margin))
+    # Bơm "tẹt ga" thêm 5GB cho A-only
+    extra_margin=5368709120
+    superSize=$(echo "$superSize + $extra_margin" | bc)
     
-    # Giảm margin an toàn gốc từ 256MB xuống 10MB để tối ưu không gian
-    GROUP_SIZE=$((superSize - 10485760))   
+    # Tính GROUP_SIZE bằng bc
+    GROUP_SIZE=$(echo "$superSize - 10485760" | bc)
     
     lpargs="-F --output build/baserom/images/super.img --metadata-size 65536 --super-name super --metadata-slots 2 --block-size 4096 --device super:$superSize --group=qti_dynamic_partitions:$GROUP_SIZE"
     
@@ -135,9 +135,12 @@ if [[ "$is_ab_device" == false ]]; then
 else
     repack "Packing super.img for V-AB device"
     
-    # [BỔ SUNG] Ép tăng dung lượng Super
-    extra_margin=524288000
-    superSize=$((superSize + extra_margin))
+    # 1. Bơm "tẹt ga" thêm 5GB (5368709120 bytes) bằng bc
+    extra_margin=5368709120
+    superSize=$(echo "$superSize + $extra_margin" | bc)
+    
+    # 2. Tính toán GROUP_SIZE bằng bc (trừ đi 10MB margin an toàn)
+    GROUP_SIZE=$(echo "$superSize - 10485760" | bc)
     
     lpargs="-F --virtual-ab --output $work_dir/build/baserom/images/super.img --metadata-size 65536 --super-name super --metadata-slots 3 --block-size 4096 --device super:$superSize --group=qti_dynamic_partitions_a:$GROUP_SIZE --group=qti_dynamic_partitions_b:$GROUP_SIZE"
     
