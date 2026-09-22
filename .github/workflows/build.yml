@@ -30,12 +30,19 @@ jobs:
       - name: Clean All Unused file,application
         run: |
           docker rmi `docker images -q` || true
+          
+          # Dừng các dịch vụ không cần thiết trước khi gỡ cài đặt
+          sudo systemctl stop php8.3-fpm.service || true
+          sudo systemctl disable php8.3-fpm.service || true
+          
           sudo apt-get -y purge azure-cli ghc* zulu* hhvm llvm* firefox google* dotnet* powershell mysql* php* || true
           sudo apt-get -y autoremove --purge || true
-          sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php || true
+          
+          # Không xóa /etc/php thủ công nữa vì purge đã lo việc đó
+          sudo rm -rf /usr/share/dotnet /etc/mysql || true
+          
           sudo apt-get -y autoclean || true
           sudo apt-get clean || true
-
       - name: Checkout repository
         uses: actions/checkout@main
 
