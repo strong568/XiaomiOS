@@ -91,7 +91,12 @@ fi
 # Pack super.img
 if [[ "$is_ab_device" == false ]]; then
     repack "Packing super.img for A-only device"
-    GROUP_SIZE=$((superSize - 268435456))   
+    
+    # [BỔ SUNG] Ép tăng dung lượng
+    extra_margin=524288000
+    superSize=$((superSize + extra_margin))
+    
+    GROUP_SIZE=$((superSize - 10485760))  
     lpargs="-F --output build/baserom/images/super.img --metadata-size 65536 --super-name super --metadata-slots 2 --block-size 4096 --device super:$superSize --group=qti_dynamic_partitions:$GROUP_SIZE"
     
     for pname in odm mi_ext system system_ext product vendor; do
@@ -109,7 +114,12 @@ if [[ "$is_ab_device" == false ]]; then
 else
     repack "Packing super.img for V-AB device"
     
-    GROUP_SIZE=$((superSize - 268435456))   # 256MB margin - Fix for error -22
+    # [BỔ SUNG] Ép tăng dung lượng Super thêm 500MB để tránh lỗi tràn dung lượng trên OS4/Android 17
+    extra_margin=524288000
+    superSize=$((superSize + extra_margin))
+    
+    # Giảm margin an toàn từ 256MB xuống 10MB (10485760 bytes) để tối đa hóa không gian
+    GROUP_SIZE=$((superSize - 10485760))
     
     lpargs="-F --virtual-ab --output $work_dir/build/baserom/images/super.img --metadata-size 65536 --super-name super --metadata-slots 3 --block-size 4096 --device super:$superSize --group=qti_dynamic_partitions_a:$GROUP_SIZE --group=qti_dynamic_partitions_b:$GROUP_SIZE"
     
