@@ -1,10 +1,5 @@
-work_dir=$(pwd)
+Work_dir=$(pwd)
 source $work_dir/functions.sh
-RCLONE_CONFIG_1DRIVE="$work_dir/rclone.conf"
-
-# Cấu hình Google Drive 
-GDRIVE_REMOTE="gdrive"
-GDRIVE_FOLDER="PenguinOS_Releases" 
 
 os_type=$(cat $work_dir/bin/ddevice/os_type.txt 2>/dev/null)
 base_rom_code=$(cat $work_dir/bin/ddevice/base_rom_code.txt 2>/dev/null)
@@ -15,7 +10,7 @@ baserom_type=$(cat $work_dir/bin/ddevice/romtype.txt 2>/dev/null)
 
 # ƯU TIÊN LẤY CODENAME CHUẨN ĐÃ ĐƯỢC XỬ LÝ
 device_f=$(cat $work_dir/bin/ddevice/device_f.txt 2>/dev/null)
-if [[ -z "$device_f" || "$device_f" == "missi" ]]; then
+if [[ -z "$device_f" || "$device_f" == "missing" ]]; then
     device_f=$(cat $work_dir/bin/ddevice/device_code.txt 2>/dev/null)
 fi
 device_code="$device_f"
@@ -25,7 +20,7 @@ if [[ $(git branch --show-current) == "beta" ]]; then
     status="Development"
 else
     polyxver="$(cat Version)"
-    status="Official"
+    status="UnOfficial"
 fi
 
 # ========================================================
@@ -80,32 +75,67 @@ zip -r "${os_type}_${device_f}_${base_rom_code}.zip" ./*
 mv "${os_type}_${device_f}_${base_rom_code}.zip" ../
 popd || exit
 
-hash=$(md5sum "out/${os_type}_${device_f}_${base_rom_code}.zip" | head -c 5)
-final_zip_name="${os_type}_${polyxver}_${device_f}_${base_rom_code}_${hash}_${status}.zip"
+# 1. Lấy ngày tháng năm hiện tại (YYYYMMDD)
+current_date=$(date +"%Y%m%d")
+
+# 2. In hoa tên thiết bị (ví dụ: onyx -> ONYX)
+device_upper=$(echo "$device_f" | tr '[:lower:]' '[:upper:]')
+
+# 3. Xóa chữ "OS" ở đầu mã ROM (ví dụ: OS3.0.305.0 -> 3.0.305.0)
+clean_rom_code=${base_rom_code#OS}
+
+# 4. Ghép thành tên file chuẩn theo yêu cầu
+final_zip_name="BugOS_1.0_${device_upper}_${clean_rom_code}_${current_date}.zip"
+
+# Đổi tên file zip
 mv "out/${os_type}_${device_f}_${base_rom_code}.zip" "out/$final_zip_name"
 
-repack "Build completed"    
+repack "Build completed"
 repack "Output: $(pwd)/out/$final_zip_name"
-upload "Uploading"
 output_file="out/$final_zip_name"
 echo "$final_zip_name" > $work_dir/bin/ddevice/output_zip.txt
 
-uploaddir=$true_os
+# ============================================================
+# Tải lên Pixeldrain (Lấy link tải xuất ra output_url.txt)
+# ============================================================
+upload "Đang kết nối API Pixeldrain..."
 
-# Upload thẳng lên Google Drive theo thư mục codename chuẩn (peridot)
-upload "Uploading to Google Drive..."
-rclone -v --config="$RCLONE_CONFIG_1DRIVE" copy "$output_file" "$GDRIVE_REMOTE:$GDRIVE_FOLDER/${uploaddir}/${polyxver}/${device_f}/" \
-    --drive-chunk-size 128M \
-    --tpslimit 4 \
-    --retries 3 \
-    --timeout 15m \
-    --contimeout 15m || {
-    upload "Lỗi khi upload file lên Google Drive!"
-    exit 1
-}
+if [ -z "${PIXELDRAIN_API_KEY:-}" ]; then
+    upload "CANH BAO: Bien PIXELDRAIN_API_KEY chua duoc set, tien hanh upload an danh (anonymous)..."
+    AUTH_HEADER=""
+else
+    AUTH_HEADER="-u :${PIXELDRAIN_API_KEY}"
+fi
+
+if [ ! -f "$output_file" ]; then
+    upload "LOI: Khong tim thay file output: $output_file"
+    echo "" > $work_dir/bin/ddevice/output_url.txt
+else
+    upload "Bắt đầu tải file $final_zip_name lên Pixeldrain..."
+    
+    # Upload qua API Pixeldrain (PUT request qua Basic Auth)
+    UPLOAD_RESPONSE=$(curl -s -# -T "$output_file" $AUTH_HEADER "https://pixeldrain.com/api/file/$final_zip_name")
+    
+    # Bóc tách ID file từ JSON response
+    PIXELDRAIN_ID=$(echo "$UPLOAD_RESPONSE" | grep -oP '"id":"\K[^"]+' | head -n 1)
+
+    if [ -n "$PIXELDRAIN_ID" ] && [ "$PIXELDRAIN_ID" != "null" ]; then
+        PIXELDRAIN_LINK="https://pixeldrain.com/u/$PIXELDRAIN_ID"
+        upload "Tải lên Pixeldrain thành công! Link: $PIXELDRAIN_LINK"
+        
+        # Ghi link vào output_url.txt để notify.py tự lấy gửi đi
+        echo "$PIXELDRAIN_LINK" > $work_dir/bin/ddevice/output_url.txt
+    else
+        upload "Lỗi khi upload lên Pixeldrain. Phản hồi: $UPLOAD_RESPONSE"
+        echo "" > $work_dir/bin/ddevice/output_url.txt
+    fi
+fi
 
 upload "Clean Workflow.."
 rm -rf $work_dir/out
 rm -rf $work_dir/build
 
 upload "Build ${os_type}_${polyxver} for ${device_f} successful!"
+if [ -n "$PIXELDRAIN_LINK" ]; then
+    upload "Download: $PIXELDRAIN_LINK"
+fi
