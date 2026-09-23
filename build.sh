@@ -205,12 +205,21 @@ if is_invalid_codename "$detected_codename"; then
     done
 fi
 
-# Ưu tiên 3: Nếu vẫn rỗng hoặc là giá trị rác, bóc từ tên file zip (danh sách codename đầy đủ)
+# Ưu tiên 3: Nếu vẫn rỗng/rác, bóc TỰ ĐỘNG từ tên file OTA theo đúng chuẩn đặt tên của Xiaomi
+# Format chuẩn: <codename>-ota_full-<romcode>-user-<androidver>-<hash>.zip
+# hoặc: <codename>-ota_incremental-...
+# Cach nay TONG QUAT, khong can liet ke tung ten may thu cong nhu Uu tien 4 ben duoi.
 if is_invalid_codename "$detected_codename"; then
-    detected_codename=$(echo "$baserom" | grep -o -i -E "(alioth|marble|fuxi|nuwa|ishtar|peridot|onyx|garnet|corot|duchamp|manet|houji|shennong|aurora|aristotle|carmel|sweet|munch|rubens|matisse|thor|zizhan|babylon|renoir|odin|vili|spongie|pudding|pandora|popsicle|nezha)" | head -n 1 | tr '[:upper:]' '[:lower:]')
+    fname=$(basename "$baserom" 2>/dev/null | cut -d'?' -f1)
+    detected_codename=$(echo "$fname" | grep -oE '^[A-Za-z0-9_]+-ota_(full|incremental)' | sed -E 's/-ota_(full|incremental)$//' | tr '[:upper:]' '[:lower:]')
 fi
 
-# Ưu tiên 4: Gán giá trị an toàn
+# Ưu tiên 4: Neu Uu tien 3 khong khop (ten file khac chuan), thu danh sach codename cung biet truoc
+if is_invalid_codename "$detected_codename"; then
+    detected_codename=$(echo "$baserom" | grep -o -i -E "(alioth|marble|fuxi|nuwa|ishtar|peridot|onyx|garnet|corot|duchamp|manet|houji|shennong|aurora|aristotle|carmel|sweet|munch|rubens|matisse|thor|zizhan|babylon|renoir|odin|vili|spongie|pudding|pandora|popsicle|nezha|annibale)" | head -n 1 | tr '[:upper:]' '[:lower:]')
+fi
+
+# Ưu tiên 5: Gán giá trị an toàn
 if ! is_invalid_codename "$detected_codename"; then
     device_f="$detected_codename"
 else
