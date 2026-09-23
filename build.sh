@@ -5,6 +5,20 @@ builder_name="$4"
 builder_id="$5"
 work_dir=$(pwd)
 
+# ============================================================
+# FIX QUAN TRONG: / (root) tren runner GitHub Actions gan nhu day
+# (145G/145G, chi con ~100M trong), trong khi thu muc lam viec
+# (mount rieng qua easimon/maximize-build-space) con hang chuc GB trong.
+# Neu khong doi, cac lenh nhu java (apktool/smali/baksmali), zstd, mktemp...
+# se ghi file tam vao /tmp mac dinh (nam tren /) -> het dung luong giua chung
+# -> sinh ra file .zst/.img HONG ma khong bao loi ro rang.
+# Ep tat ca ghi tam vao thu muc lam viec (con nhieu cho trong).
+export TMPDIR="$work_dir/tmp"
+mkdir -p "$TMPDIR"
+export _JAVA_OPTIONS="-Djava.io.tmpdir=$TMPDIR"
+export JAVA_TOOL_OPTIONS="-Djava.io.tmpdir=$TMPDIR"
+# ============================================================
+
 # Import functions
 tools_dir=${work_dir}/bin/$(uname)/$(uname -m)
 export PATH=$(pwd)/bin/$(uname)/$(uname -m)/:$PATH
