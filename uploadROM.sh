@@ -99,25 +99,38 @@ echo "$final_zip_name" > $work_dir/bin/ddevice/output_zip.txt
 # Tải lên Gofile.io (Lấy link tải nhanh cho Telegram)
 # ============================================================
 upload "Đang kết nối API Gofile.io..."
-GOFILE_SERVER=$(curl -s https://api.gofile.io/servers | grep -oP '"name":"\K[^"]+' | head -n 1)
 
-if [ -z "$GOFILE_SERVER" ]; then
-    GOFILE_SERVER="store1"
-fi
-
-upload "Bắt đầu upload file lên máy chủ: ${GOFILE_SERVER}.gofile.io"
-upload "Quá trình này có thể mất vài phút tùy dung lượng ROM..."
-
-UPLOAD_RESPONSE=$(curl -s -F "file=@$output_file" "https://${GOFILE_SERVER}.gofile.io/contents/upload")
-GOFILE_LINK=$(echo "$UPLOAD_RESPONSE" | grep -oP '"downloadPage":"\K[^"]+')
-
-if [ -n "$GOFILE_LINK" ]; then
-    upload "Tải lên Gofile thành công! Link: $GOFILE_LINK"
-    # Ghi đè link Gofile để xuất lên Nút Telegram
-    echo "$GOFILE_LINK" > $work_dir/bin/ddevice/output_url.txt
-else
-    upload "Lỗi khi upload lên Gofile. Dữ liệu trả về: $UPLOAD_RESPONSE"
+if [ -z "${GOFILE_TOKEN:-}" ]; then
+    upload "LOI: bien GOFILE_TOKEN chua duoc set (them vao GitHub Actions Secrets ten GOFILE_TOKEN)."
     echo "" > $work_dir/bin/ddevice/output_url.txt
+else
+    GOFILE_SERVERS_RESPONSE=$(curl -s -H "Authorization: Bearer ${GOFILE_TOKEN}" "https://api.gofile.io/servers")
+    GOFILE_SERVER=$(echo "$GOFILE_SERVERS_RESPONSE" | grep -oP '"name":"\K[^"]+' | head -n 1)
+
+    if [ -z "$GOFILE_SERVER" ]; then
+        GOFILE_SERVER="store1"
+    fi
+
+    upload "Bắt đầu upload file lên máy chủ: ${GOFILE_SERVER}.gofile.io"
+    upload "Quá trình này có thể mất vài phút tùy dung lượng ROM..."
+
+    # LƯU Ý: endpoint đúng là /contents/uploadfile (không phải /contents/upload)
+    # và phải kèm Authorization header, nếu không API trả về 404
+    UPLOAD_RESPONSE=$(curl -s \
+        -H "Authorization: Bearer ${GOFILE_TOKEN}" \
+        -F "file=@$output_file" \
+        "https://${GOFILE_SERVER}.gofile.io/contents/uploadfile")
+
+    GOFILE_LINK=$(echo "$UPLOAD_RESPONSE" | grep -oP '"downloadPage":"\K[^"]+')
+
+    if [ -n "$GOFILE_LINK" ]; then
+        upload "Tải lên Gofile thành công! Link: $GOFILE_LINK"
+        # Ghi đè link Gofile để xuất lên Nút Telegram
+        echo "$GOFILE_LINK" > $work_dir/bin/ddevice/output_url.txt
+    else
+        upload "Lỗi khi upload lên Gofile. Dữ liệu trả về: $UPLOAD_RESPONSE"
+        echo "" > $work_dir/bin/ddevice/output_url.txt
+    fi
 fi
 
 upload "Clean Workflow.."
