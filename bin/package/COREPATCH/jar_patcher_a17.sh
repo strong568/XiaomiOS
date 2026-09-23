@@ -687,10 +687,10 @@ patch_framework() {
   log "Patching framework.jar for Android 17..."
   
   # Đã mở khóa (uncomment) để patch framework.jar hoạt động trở lại
-  local decompile_dir
-  decompile_dir=$(decompile_jar "$framework_path") || return 1
-  apply_framework_signature_patches "$decompile_dir"
-  recompile_jar "$framework_path" > /dev/null
-  rm -rf "$decompile_dir"
+  # local decompile_dir
+  # decompile_dir=$(decompile_jar "$framework_path") || return 1
+  # apply_framework_signature_patches "$decompile_dir"
+  # recompile_jar "$framework_path" > /dev/null
+  # rm -rf "$decompile_dir"
 }
 
