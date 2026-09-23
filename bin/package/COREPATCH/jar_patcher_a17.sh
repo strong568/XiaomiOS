@@ -9,8 +9,8 @@ source "${SCRIPT_DIR}/helper.sh"
 # Create backup directory
 mkdir -p "$BACKUP_DIR"
 
-# API level for baksmali/smali v2
-API_LEVEL=37
+# API level for baksmali/smali v2 đã được hạ xuống 36 để tránh lỗi BaseBundle
+API_LEVEL=36
 
 # ============================================
 # Feature Flags (set by command-line arguments)
@@ -659,16 +659,16 @@ apply_framework_signature_patches() {
     warn "ParsingPackageUtils.smali not found"
   fi
 
-  log "Signature verification patches applied to framework.jar (Android 16)"
+  log "Signature verification patches applied to framework.jar (Android 17)"
 }
 
-# Apply disable secure flag patches to framework.jar (Android 16)
+# Apply disable secure flag patches to framework.jar (Android 17)
 apply_framework_disable_secure_flag() {
   local decompile_dir="$1"
 
   log "Applying disable secure flag patches to framework.jar (Android 17)..."
 
-  # Note: For Android 16, disable secure flag does not require framework.jar patches
+  # Note: For Android 17, disable secure flag does not require framework.jar patches
   # Only services.jar and miui-services.jar are affected
   log "Disable secure flag: No framework.jar patches required for Android 17"
 
@@ -684,11 +684,13 @@ patch_framework() {
     return 1
   fi
 
-  log "BỎ QUA patch framework.jar cho Android 17 để tránh lỗi Smali BaseBundle"
-  # Comment toàn bộ các lệnh bên dưới lại:
-  # local decompile_dir
-  # decompile_dir=$(decompile_jar "$framework_path") || return 1
-  # apply_framework_signature_patches "$decompile_dir"
-  # recompile_jar "$framework_path" > /dev/null
-  # rm -rf "$decompile_dir"
+  log "Patching framework.jar for Android 17..."
+  
+  # Đã mở khóa (uncomment) để patch framework.jar hoạt động trở lại
+  local decompile_dir
+  decompile_dir=$(decompile_jar "$framework_path") || return 1
+  apply_framework_signature_patches "$decompile_dir"
+  recompile_jar "$framework_path" > /dev/null
+  rm -rf "$decompile_dir"
 }
+
