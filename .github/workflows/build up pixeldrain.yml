@@ -1,4 +1,4 @@
-name: PenguinOS ROM Build
+name: PenguinOS Xiaomi ROM Build
 
 on:
   workflow_dispatch:
