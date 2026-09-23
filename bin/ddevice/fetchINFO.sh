@@ -9,7 +9,7 @@ device_code=$(cat $work_dir/bin/ddevice/device_code.txt)
 name=$(cat $work_dir/bin/ddevice/name_devices.txt)
 
 # ========================================================
-# [BỔ SUNG] XỬ LÝ LỖI KHÔNG TÌM THẤY TÊN THIẾT BỊ
+# ĐOẠN MÃ XỬ LÝ LỖI KHÔNG TÌM THẤY TÊN THIẾT BỊ
 if [[ "${device_code,,}" == "annibale" ]]; then
     name="Xiaomi 15 Pro"
     echo "$name" > $work_dir/bin/ddevice/name_devices.txt
@@ -48,7 +48,7 @@ echo "$name" > $work_dir/bin/script2flash/META-INF/Data/DeviceName
 echo "$systemtype" > $work_dir/bin/script2flash/META-INF/Data/Types
 
 
-echo "------------------ BugOS BuildInfo ---------------------"
+echo "------------------Nothings BuildInfo ---------------------"
 echo "- Device Name: $name"
 echo "- Codename: $device_code"
 echo "- Xiaomi Version: $rom_os"  
