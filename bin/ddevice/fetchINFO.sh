@@ -1,15 +1,23 @@
+Baserom="$1"
+work_dir=$(pwd)
+source $work_dir/functions.sh
+
+regionTYPE=$(cat $work_dir/bin/ddevice/device_type.txt)
+AndroidVer=$(< $work_dir/build/baserom/images/system/system/build.prop grep "ro.system.build.version.release" |awk 'NR==1' |cut -d '=' -f 2)
+sdkLevel=$(< $work_dir/build/baserom/images/system/system/build.prop grep "ro.system.build.version.sdk" |awk 'NR==1' |cut -d '=' -f 2)
 device_code=$(cat $work_dir/bin/ddevice/device_code.txt)
 name=$(cat $work_dir/bin/ddevice/name_devices.txt)
 
-# [BỔ SUNG] Ghi đè tên thiết bị nếu là mã annibale
+# ========================================================
+# [BỔ SUNG] XỬ LÝ LỖI KHÔNG TÌM THẤY TÊN THIẾT BỊ
 if [[ "${device_code,,}" == "annibale" ]]; then
-    name="Xiaomi 15" # HOẶC THAY BẰNG TÊN THƯƠNG MẠI CHÍNH XÁC CỦA BẠN
+    name="Xiaomi 15 Pro"
     echo "$name" > $work_dir/bin/ddevice/name_devices.txt
 elif [[ "$name" == "Không tìm thấy key" || -z "$name" ]]; then
-    # Dự phòng: Nếu không tìm thấy tên thì lấy luôn mã codename viết hoa
     name=$(echo "$device_code" | tr '[:lower:]' '[:upper:]')
     echo "$name" > $work_dir/bin/ddevice/name_devices.txt
 fi
+# ========================================================
 
 base_rom_code=$(cat $work_dir/bin/ddevice/base_rom_code.txt)
 rom_os=$(cat $work_dir/bin/ddevice/rom_os.txt)
@@ -41,12 +49,12 @@ echo "$systemtype" > $work_dir/bin/script2flash/META-INF/Data/Types
 
 
 echo "------------------ BugOS BuildInfo ---------------------"
-echo "- Device Name:"$name""
-echo "- Codename:"$device_code""
-echo "- Xiaomi Version:"$rom_os""  
-echo "- BuildRegion:"$regionTYPE""
-echo "- Android:"$AndroidVer""                                      
-echo "- Xiaomi Version:"$base_rom_code""                                                                        
-echo "- BuildTool Version:"$starxVER""
-echo "- OS Type:"$systemtype""
+echo "- Device Name: $name"
+echo "- Codename: $device_code"
+echo "- Xiaomi Version: $rom_os"  
+echo "- BuildRegion: $regionTYPE"
+echo "- Android: $AndroidVer"                                      
+echo "- Xiaomi Version: $base_rom_code"                                                                        
+echo "- BuildTool Version: $starxVER"
+echo "- OS Type: $systemtype"
 echo "--------------------------------------------------------"
