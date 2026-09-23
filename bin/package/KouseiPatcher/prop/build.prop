@@ -1,6 +1,3 @@
-
-
-
 #PlayIntegrityFix
 ro.boot.verifiedbootstate=green
 vendor.boot.verifiedbootstate=green
@@ -36,3 +33,8 @@ init.svc.adbd=stopped
 ro.miui.has_gmscore=1
 ro.opa.eligible_device=true
 ro.miui.support_miui_ime_bottom=1
+
+# === Cấu hình đổi tên ROM thành BugOS ===
+ro.build.display.id=BugOS 1.0
+ro.build.version.incremental=1.0
+ro.miui.ui.version.name=BugOS
