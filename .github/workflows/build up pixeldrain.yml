@@ -73,6 +73,28 @@ jobs:
         run: |
           sudo -E bash build.sh "$INPUT_URL" "${{ github.repository }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
 
+
+      # ================= TRÍCH XUẤT SAU KHI MOD =================
+      - name: Extract Modded Framework Files...
+        run: |
+          sudo -E bash frameworkExtract.sh mod "${{ inputs.input_url }}"
+
+      # ================= UPLOAD 2 FILE ZIP LÊN ARTIFACTS =================
+      - name: Upload Stock Framework Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DUMP_STOCK_NAME }}
+          path: ${{ env.DUMP_STOCK_PATH }}
+          retention-days: 7
+
+      - name: Upload Modded Framework Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DUMP_MOD_NAME }}
+          path: ${{ env.DUMP_MOD_PATH }}
+          retention-days: 7
+      # ===================================================================
+          
       - name: Pack ROM...
         run: |
           python notify.py pack "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}" || true

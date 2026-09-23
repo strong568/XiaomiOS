@@ -58,16 +58,39 @@ jobs:
       - name: Giving permission
         run: |
           sudo chmod 777 -R *
-
+          
       - name: Build ROM...
         env:
           INPUT_URL: ${{ inputs.input_url }}
         run: |
           sudo -E bash build.sh "$INPUT_URL" "${{ github.repository }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
 
+      # ================= TRÍCH XUẤT SAU KHI MOD =================
+      - name: Extract Modded Framework Files...
+        run: |
+          sudo -E bash frameworkExtract.sh mod "${{ inputs.input_url }}"
+
+      # ================= UPLOAD 2 FILE ZIP LÊN ARTIFACTS =================
+      - name: Upload Stock Framework Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DUMP_STOCK_NAME }}
+          path: ${{ env.DUMP_STOCK_PATH }}
+          retention-days: 7
+
+      - name: Upload Modded Framework Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DUMP_MOD_NAME }}
+          path: ${{ env.DUMP_MOD_PATH }}
+          retention-days: 7
+      # ===================================================================
+
       - name: Pack ROM...
         run: |
           sudo bash packROM.sh
+          
+
 
       - name: Upload ROM to Pixeldrain...
         run: |
