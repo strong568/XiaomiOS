@@ -5,7 +5,7 @@ androidVER=$(cat $WORK_DIR/bin/ddevice/androidver.txt)
 APKEDITOR="java -jar $WORK_DIR/bin/apktool/apke.jar"
 regionTYPE=$(cat $WORK_DIR/bin/ddevice/device_type.txt)
 
-if [[ $androidVER == "16" || $androidVER == "15" || $androidVER == "14" || $androidVER == "13" && $regionTYPE == *"Global"* ]];then
+if [[ $androidVER == "17" || $androidVER == "16" || $androidVER == "15" || $androidVER == "14" || $androidVER == "13" ]];then
     #ready for patch
 	mods "Fixing Theme Issues"
     mkdir -p $WORK_DIR/apk_temp
