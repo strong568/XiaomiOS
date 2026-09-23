@@ -71,28 +71,14 @@ jobs:
 
       - name: Upload ROM to Pixeldrain...
         run: |
-          # Tìm file ROM đuôi .zip sau khi đóng gói
-          ROM_FILE=$(find . -maxdepth 2 -name "*.zip" ! -name "tools*" | head -n 1)
+          # Chạy uploadROM.sh (kèm cờ -E để giữ biến PIXELDRAIN_API_KEY)
+          sudo -E bash uploadROM.sh
           
-          if [ -z "$ROM_FILE" ]; then
-            echo "Lỗi: Không tìm thấy file ROM .zip nào!"
-            exit 1
-          fi
-
-          FILE_NAME=$(basename "$ROM_FILE")
-          echo "Bắt đầu upload: $FILE_NAME"
-
-          RESPONSE=$(curl -# -T "$ROM_FILE" -u ":$PIXELDRAIN_API_KEY" "https://pixeldrain.com/api/file/$FILE_NAME")
-          echo "Response: $RESPONSE"
-
-          FILE_ID=$(echo "$RESPONSE" | jq -r '.id')
-          if [ "$FILE_ID" != "null" ] && [ -n "$FILE_ID" ]; then
-            DOWNLOAD_URL="https://pixeldrain.com/u/$FILE_ID"
+          # Đọc link Pixeldrain từ file do uploadROM.sh ghi ra
+          if [ -f "bin/ddevice/output_url.txt" ]; then
+            DOWNLOAD_URL=$(cat bin/ddevice/output_url.txt)
             echo "::notice title=Pixeldrain Download Link::$DOWNLOAD_URL"
             echo "============================================="
             echo "LINK TẢI ROM: $DOWNLOAD_URL"
             echo "============================================="
-          else
-            echo "Lỗi upload Pixeldrain: $RESPONSE"
-            exit 1
           fi

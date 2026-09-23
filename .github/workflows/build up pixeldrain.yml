@@ -17,7 +17,7 @@ jobs:
   Initialize:
     runs-on: ubuntu-latest
     env:
-      # Truyền giá trị giả để notify.py không bị crash do thiếu biến môi trường
+      # Truyền giá trị giả để notify.py không bị crash nếu thiếu secret Telegram
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || 'disabled' }}
       TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID || '0' }}
       PIXELDRAIN_API_KEY: ${{ secrets.PIXELDRAIN_API_KEY }}
@@ -78,32 +78,18 @@ jobs:
           python notify.py pack "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}" || true
           sudo bash packROM.sh
 
-      - name: Upload ROM to Pixeldrain...
+      - name: Upload ROM...
         run: |
           python notify.py upload "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}" || true
           
-          # Tìm file zip ROM vừa pack
-          ROM_FILE=$(find . -maxdepth 2 -name "*.zip" ! -name "tools*" | head -n 1)
+          # Chạy uploadROM.sh (kèm cờ -E để giữ biến PIXELDRAIN_API_KEY)
+          sudo -E bash uploadROM.sh
           
-          if [ -z "$ROM_FILE" ]; then
-            echo "Lỗi: Không tìm thấy file ROM .zip nào!"
-            exit 1
-          fi
-
-          FILE_NAME=$(basename "$ROM_FILE")
-          echo "Bắt đầu upload: $FILE_NAME"
-
-          RESPONSE=$(curl -# -T "$ROM_FILE" -u ":$PIXELDRAIN_API_KEY" "https://pixeldrain.com/api/file/$FILE_NAME")
-          echo "Response: $RESPONSE"
-
-          FILE_ID=$(echo "$RESPONSE" | jq -r '.id')
-          if [ "$FILE_ID" != "null" ] && [ -n "$FILE_ID" ]; then
-            DOWNLOAD_URL="https://pixeldrain.com/u/$FILE_ID"
-            echo "ROM_URL=$DOWNLOAD_URL" >> $GITHUB_ENV
-            echo "::notice title=Pixeldrain Download Link::$DOWNLOAD_URL"
-          else
-            echo "Lỗi upload Pixeldrain: $RESPONSE"
-            exit 1
+          # Đọc link Pixeldrain từ file output do uploadROM.sh tạo ra
+          if [ -f "bin/ddevice/output_url.txt" ]; then
+            ROM_URL=$(cat bin/ddevice/output_url.txt)
+            echo "ROM_URL=$ROM_URL" >> $GITHUB_ENV
+            echo "::notice title=Pixeldrain Download Link::$ROM_URL"
           fi
       
       - name: Success Notification
