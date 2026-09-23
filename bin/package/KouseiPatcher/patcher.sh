@@ -3,6 +3,12 @@
 
 dir=$(pwd)
 sdkLevel=$(cat $dir/bin/ddevice/sdkLevel.txt)
+
+# [Zousätzlech Code fir API erofzesetzen] Wann API 37 oder méi ass, reduzéiert et op 36 fir Smali Feeler ze vermeiden
+if [ "$sdkLevel" -ge 37 ]; then
+    sdkLevel=36
+fi
+
 patch="python3 $dir/bin/package/KouseiPatcher/toolbox.py"
 JARDIR="$dir/jar_temp"
 
