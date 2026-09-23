@@ -67,6 +67,10 @@ def send_notification(status, repo_name, rom_link, channel_id, bot_token, msg_id
     else:
         codename = "Unknown"
 
+    device_name = read_file_if_exists("bin/ddevice/name_devices.txt")
+    if not is_available(device_name):
+        device_name = "Đang xác định..."
+
     version_rom = read_file_if_exists("bin/ddevice/rom_version.txt")
     if not version_rom:
         version_rom = read_file_if_exists("bin/ddevice/base_rom_code.txt")
@@ -98,6 +102,7 @@ def send_notification(status, repo_name, rom_link, channel_id, bot_token, msg_id
     message = f"""👾 <b>TIẾN TRÌNH BUILD ROM</b>
 <code>──────────────────────────────</code>
 👤 Người thực hiện: {builder_text}
+📍 Device: {device_name}
 🛠 Phiên bản: {version_tool}
 📱 Codename: {codename}
 💿 Hệ điều hành: {version_rom}
@@ -189,3 +194,4 @@ if __name__ == "__main__":
         sys.exit(1)
 
     send_notification(status, repo_name, rom_link, channel_id, bot_token, msg_id, build_id, builder_name, builder_id)
+    
