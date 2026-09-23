@@ -79,4 +79,17 @@ find "$SEARCH_DIR" -type f -name "*.prop" -exec sed -i 's/^ro.build.version.incr
 # Đổi tên giao diện người dùng
 find "$SEARCH_DIR" -type f -name "*.prop" -exec sed -i 's/^ro.miui.ui.version.name=.*/ro.miui.ui.version.name=BugOS/g' {} +
 
+# Đổi tên người build và máy chủ build
+find "$SEARCH_DIR" -type f -name "*.prop" -exec sed -i 's/^ro.build.user=.*/ro.build.user=BugOS/g' {} +
+find "$SEARCH_DIR" -type f -name "*.prop" -exec sed -i 's/^ro.build.host=.*/ro.build.host=BugOS-Team/g' {} +
+find "$SEARCH_DIR" -type f -name "*.prop" -exec sed -i 's/^ro.build.flavor=.*/ro.build.flavor=BugOS/g' {} +
+
+# Thay thế các cụm từ hiển thị rõ ràng của Xiaomi thành "BugOS"
+find "$SEARCH_DIR" -type f -name "*.prop" -exec sed -i 's/Xiaomi HyperOS/BugOS/g' {} +
+find "$SEARCH_DIR" -type f -name "*.prop" -exec sed -i 's/Xiaomi MIUI/BugOS/g' {} +
+find "$SEARCH_DIR" -type f -name "*.prop" -exec sed -i 's/MIUI Global/BugOS/g' {} +
+
+# "Nhuộm" chữ MIUI thành BugOS (Tuyệt chiêu: CHỈ đổi chữ MIUI nằm SAU dấu "=" để không làm hỏng biến hệ thống ro.miui.*)
+find "$SEARCH_DIR" -type f -name "*.prop" -exec sed -i 's/\(=.*\)MIUI/\1BugOS/g' {} +
+
 patch "Done"
