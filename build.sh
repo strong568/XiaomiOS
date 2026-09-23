@@ -151,6 +151,9 @@ for part in ${super_list}; do
     fi
 done
 
+# Trích xuất Framework Gốc (Stock) ngay sau khi bung partition
+bash "$work_dir/frameworkExtract.sh" stock "$baserom"
+
 # ==================== FIX TÊN CODENAME THIẾT BỊ ====================
 detected_codename=""
 
