@@ -14,4 +14,14 @@ if [ -z "$EXACT_KEY" ]; then
 fi
 
 VALUE=$(jq -r --arg key "$EXACT_KEY" '.[$key] // "Không tìm thấy key"' "$FILE_JSON")
+
+# FIX: build.sh (va cac script khac) doc ten thiet bi tu device_name.txt,
+# nhung ban cu chi ghi vao name_devices.txt nen ten khong bao gio duoc cap nhat.
+# Ghi ca 2 file de dam bao tuong thich voi moi noi dang doc.
 echo "$VALUE" > $work_dir/bin/ddevice/name_devices.txt
+
+if [[ "$VALUE" != "Không tìm thấy key" && -n "$VALUE" ]]; then
+    echo "$VALUE" > $work_dir/bin/ddevice/device_name.txt
+else
+    warn "Khong tim thay ten thiet bi cho key '$KEY' (EXACT_KEY='$EXACT_KEY') trong devices.json"
+fi
