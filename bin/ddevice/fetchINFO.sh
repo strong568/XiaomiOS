@@ -1,12 +1,16 @@
-baserom="$1"
-work_dir=$(pwd)
-source $work_dir/functions.sh
-
-regionTYPE=$(cat $work_dir/bin/ddevice/device_type.txt)
-AndroidVer=$(< $work_dir/build/baserom/images/system/system/build.prop grep "ro.system.build.version.release" |awk 'NR==1' |cut -d '=' -f 2)
-sdkLevel=$(< $work_dir/build/baserom/images/system/system/build.prop grep "ro.system.build.version.sdk" |awk 'NR==1' |cut -d '=' -f 2)
 device_code=$(cat $work_dir/bin/ddevice/device_code.txt)
 name=$(cat $work_dir/bin/ddevice/name_devices.txt)
+
+# [BỔ SUNG] Ghi đè tên thiết bị nếu là mã annibale
+if [[ "${device_code,,}" == "annibale" ]]; then
+    name="Xiaomi 15" # HOẶC THAY BẰNG TÊN THƯƠNG MẠI CHÍNH XÁC CỦA BẠN
+    echo "$name" > $work_dir/bin/ddevice/name_devices.txt
+elif [[ "$name" == "Không tìm thấy key" || -z "$name" ]]; then
+    # Dự phòng: Nếu không tìm thấy tên thì lấy luôn mã codename viết hoa
+    name=$(echo "$device_code" | tr '[:lower:]' '[:upper:]')
+    echo "$name" > $work_dir/bin/ddevice/name_devices.txt
+fi
+
 base_rom_code=$(cat $work_dir/bin/ddevice/base_rom_code.txt)
 rom_os=$(cat $work_dir/bin/ddevice/rom_os.txt)
 starxVER=$(cat $work_dir/Version)
