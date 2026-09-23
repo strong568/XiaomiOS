@@ -67,4 +67,16 @@ if [ -f "$prop/cust.prop" ]; then
   done
 fi
 
+# 5. Ép đổi thông số ROM gốc thành BugOS 1.0 trên toàn bộ ROM
+echo "[IMGPATCH] - Renaming OS to BugOS 1.0..."
+
+# Đổi biến hiển thị tên phiên bản trong Giới thiệu điện thoại
+find "$SEARCH_DIR" -type f -name "*.prop" -exec sed -i 's/^ro.build.display.id=.*/ro.build.display.id=BugOS 1.0/g' {} +
+
+# Đổi mã phiên bản cập nhật (incremental)
+find "$SEARCH_DIR" -type f -name "*.prop" -exec sed -i 's/^ro.build.version.incremental=.*/ro.build.version.incremental=1.0/g' {} +
+
+# Đổi tên giao diện người dùng
+find "$SEARCH_DIR" -type f -name "*.prop" -exec sed -i 's/^ro.miui.ui.version.name=.*/ro.miui.ui.version.name=BugOS/g' {} +
+
 patch "Done"
