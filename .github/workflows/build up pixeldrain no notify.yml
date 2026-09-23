@@ -1,0 +1,98 @@
+name: PenguinOS Xiaomi ROM Build no notify
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_url:
+        description: 'URL of the ROM to build'
+        required: true
+      builder_name:
+        description: 'Tên người build'
+        required: false
+      builder_id:
+        description: 'ID người build'
+        required: false
+      
+jobs:
+  Initialize:
+    runs-on: ubuntu-latest
+    env:
+      PIXELDRAIN_API_KEY: ${{ secrets.PIXELDRAIN_API_KEY }}
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          swap-size-mb: 1024
+          root-reserve-mb: 512
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+
+      - name: Clean All Unused file,application
+        run: |
+          docker rmi `docker images -q` || true
+          sudo apt-get -y purge azure-cli ghc* zulu* hhvm llvm* firefox google* dotnet* powershell mysql* php* || true
+          sudo apt-get -y autoremove --purge || true
+          sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php || true
+          sudo apt-get -y autoclean || true
+          sudo apt-get clean || true
+
+      - name: Checkout repository
+        uses: actions/checkout@main
+
+      - name: Set up Time
+        run: |
+          echo "Setting Vienam timezone"
+          sudo timedatectl set-timezone Asia/Ho_Chi_Minh
+          
+      - name: Install OpenJDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Stuff
+        run: |
+          sudo bash setup.sh
+        
+      - name: Giving permission
+        run: |
+          sudo chmod 777 -R *
+
+      - name: Build ROM...
+        env:
+          INPUT_URL: ${{ inputs.input_url }}
+        run: |
+          sudo -E bash build.sh "$INPUT_URL" "${{ github.repository }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
+
+      - name: Pack ROM...
+        run: |
+          sudo bash packROM.sh
+
+      - name: Upload ROM to Pixeldrain...
+        run: |
+          # Tìm file ROM đuôi .zip sau khi đóng gói
+          ROM_FILE=$(find . -maxdepth 2 -name "*.zip" ! -name "tools*" | head -n 1)
+          
+          if [ -z "$ROM_FILE" ]; then
+            echo "Lỗi: Không tìm thấy file ROM .zip nào!"
+            exit 1
+          fi
+
+          FILE_NAME=$(basename "$ROM_FILE")
+          echo "Bắt đầu upload: $FILE_NAME"
+
+          RESPONSE=$(curl -# -T "$ROM_FILE" -u ":$PIXELDRAIN_API_KEY" "https://pixeldrain.com/api/file/$FILE_NAME")
+          echo "Response: $RESPONSE"
+
+          FILE_ID=$(echo "$RESPONSE" | jq -r '.id')
+          if [ "$FILE_ID" != "null" ] && [ -n "$FILE_ID" ]; then
+            DOWNLOAD_URL="https://pixeldrain.com/u/$FILE_ID"
+            echo "::notice title=Pixeldrain Download Link::$DOWNLOAD_URL"
+            echo "============================================="
+            echo "LINK TẢI ROM: $DOWNLOAD_URL"
+            echo "============================================="
+          else
+            echo "Lỗi upload Pixeldrain: $RESPONSE"
+            exit 1
+          fi
