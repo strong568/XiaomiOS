@@ -91,17 +91,19 @@ elif [[ ${baserom_type} == 'br' ]]; then
 elif [[ ${is_base_rom_eu} == true ]]; then
     unpack "Extracting files from BASETROM [super.img]"
     unzip -q "${baserom}" '*super.img*' -d build/baserom/ || error "Extracting [super.img] error"
-    
+
     super_dir=$(dirname $(find build/baserom -name "*super.img.0*" | head -n 1))
     if [ -z "$super_dir" ]; then
         super_dir="build/baserom/images"
     fi
 
     unpack "Merging super.img.* into super.img"
+    # FIX: dung ls -v de sap xep dung thu tu so (tranh loi khi co super.img.10 tro len)
+    SUPER_FILES=$(ls -v ${super_dir}/*super.img.*)
     if [ -x "/usr/bin/simg2img" ]; then
-        /usr/bin/simg2img ${super_dir}/*super.img.* build/baserom/super.img
+        /usr/bin/simg2img $SUPER_FILES build/baserom/super.img
     else
-        simg2img ${super_dir}/*super.img.* build/baserom/super.img
+        simg2img $SUPER_FILES build/baserom/super.img
     fi
 
     if [[ ! -s build/baserom/super.img ]]; then
@@ -122,11 +124,11 @@ fi
 
 if [[ ${baserom_type} == 'payload' ]]; then
     unpack "Unpacking payload.bin"
-    payload-extract extract -o build/baserom/images/ build/baserom/payload.bin >/dev/null 2>&1 || error "Unpacking payload.bin failed"    
+    payload-extract extract -o build/baserom/images/ build/baserom/payload.bin >/dev/null 2>&1 || error "Unpacking payload.bin failed"
 elif [[ ${baserom_type} == 'br' ]]; then
     super_list=$(cat build/baserom/dynamic_partitions_op_list | grep "add " | awk '{ print $2 }')
     unpack "Unpacking new.dat.br"
-    for brotlipart in ${super_list}; do 
+    for brotlipart in ${super_list}; do
         brotli -d build/baserom/$brotlipart.new.dat.br >/dev/null 2>&1
         python3 $work_dir/bin/Linux/x86_64/sdat2img.py build/baserom/$brotlipart.transfer.list build/baserom/$brotlipart.new.dat build/baserom/images/$brotlipart.img >/dev/null 2>&1
         rm -rf build/baserom/$brotlipart.new.dat* build/baserom/$brotlipart.transfer.list build/baserom/$brotlipart.patch.*
@@ -134,13 +136,13 @@ elif [[ ${baserom_type} == 'br' ]]; then
 elif [[ ${is_base_rom_eu} == true ]]; then
     unpack "Unpacking BASEROM [super.img]"
     python3 bin/lpunpack.py build/baserom/super.img build/baserom/images/ >/dev/null 2>&1
-    
+
     for i in build/baserom/images/*_a.img; do
         if [ -f "$i" ]; then
             mv "$i" "${i%_a.img}.img"
         fi
     done
-    
+
     super_list="system system_ext product vendor odm mi_ext"
 fi
 
@@ -151,24 +153,51 @@ for part in ${super_list}; do
     fi
 done
 
-# ==================== FIX TÊN CODENAME THIẾT BỊ ====================
+# ==================== FIX TÊN CODENAME THIẾT BỊ (ĐÃ SỬA) ====================
 detected_codename=""
 
-# Ưu tiên 1: Quét TẤT CẢ các file build.prop có trong ROM để bắt mọi từ khóa có thể
-prop_files=$(find $work_dir/build/baserom/images/ -type f -name "*.prop")
-for prop in $prop_files; do
-    if [[ -z "$detected_codename" || "$detected_codename" == "missi" ]]; then
-        detected_codename=$(grep -m1 -E "^ro\.product\.(vendor\.|product\.|system\.)?device=|^ro\.build\.product=" "$prop" | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
-    fi
-done
+# Danh sach cac gia tri "rac"/placeholder ma Xiaomi hay dung, KHONG phai codename that
+# (them "miproduct"/"mivendor" vi day la nguyen nhan gay loi build MIPRODUCT.zip / MIVENDOR.zip)
+# Dung pattern mi<partition> de bat toan bo cac bien the tuong tu (misystem, miext, miodm...)
+is_invalid_codename() {
+    case "$1" in
+        ""|missi|generic|unknown|default|common)
+            return 0 ;;
+        mi_product|mi_vendor|mi_system|mi_odm|mi_ext|mi_system_ext|miproduct|mivendor|misystem|miodm|miext|misystemext)
+            return 0 ;;
+        *)
+            return 1 ;;
+    esac
+}
 
-# Ưu tiên 2: Nếu vẫn rỗng, bóc từ tên file zip (Đã bổ sung đa dạng các dòng máy)
-if [[ -z "$detected_codename" || "$detected_codename" == "missi" ]]; then
-    detected_codename=$(echo "$baserom" | grep -o -i -E "(alioth|marble|fuxi|nuwa|ishtar|peridot|onyx|garnet|corot|duchamp|manet|houji|shennong|aurora|aristotle|carmel|sweet|munch|rubens|matisse|thor|zizhan|babylon|renoir|odin|vili|spongie)" | head -n 1 | tr '[:upper:]' '[:lower:]')
+# Ưu tiên 1: Đọc CHÍNH XÁC từ product/etc/build.prop hoặc vendor/build.prop
+# Đây là nơi chứa codename thật (khác với system/build.prop hay trả về "missi"/"miproduct" generic)
+if [ -f "$work_dir/build/baserom/images/product/etc/build.prop" ]; then
+    detected_codename=$(grep -m1 "^ro.product.product.device=" "$work_dir/build/baserom/images/product/etc/build.prop" | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
+elif [ -f "$work_dir/build/baserom/images/vendor/build.prop" ]; then
+    detected_codename=$(grep -m1 "^ro.product.vendor.device=" "$work_dir/build/baserom/images/vendor/build.prop" | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
 fi
 
-# Ưu tiên 3: Gán giá trị an toàn
-if [[ -n "$detected_codename" && "$detected_codename" != "missi" ]]; then
+# Ưu tiên 2: Nếu vẫn rỗng hoặc là giá trị rác, quét TẤT CẢ file .prop với các key rộng hơn
+if is_invalid_codename "$detected_codename"; then
+    prop_files=$(find $work_dir/build/baserom/images/ -type f -name "*.prop")
+    for prop in $prop_files; do
+        if is_invalid_codename "$detected_codename"; then
+            candidate=$(grep -m1 -E "^ro\.product\.(vendor\.|product\.|system\.)?device=|^ro\.build\.product=" "$prop" | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
+            if ! is_invalid_codename "$candidate"; then
+                detected_codename="$candidate"
+            fi
+        fi
+    done
+fi
+
+# Ưu tiên 3: Nếu vẫn rỗng hoặc là giá trị rác, bóc từ tên file zip (danh sách codename đầy đủ)
+if is_invalid_codename "$detected_codename"; then
+    detected_codename=$(echo "$baserom" | grep -o -i -E "(alioth|marble|fuxi|nuwa|ishtar|peridot|onyx|garnet|corot|duchamp|manet|houji|shennong|aurora|aristotle|carmel|sweet|munch|rubens|matisse|thor|zizhan|babylon|renoir|odin|vili|spongie|pudding|pandora|popsicle|nezha)" | head -n 1 | tr '[:upper:]' '[:lower:]')
+fi
+
+# Ưu tiên 4: Gán giá trị an toàn
+if ! is_invalid_codename "$detected_codename"; then
     device_f="$detected_codename"
 else
     device_f="unknown_device"
@@ -188,8 +217,8 @@ echo "$MY_BRAND_NAME" > $work_dir/bin/ddevice/os_type.txt
 echo "$MY_BRAND_NAME" > $work_dir/bin/ddevice/rom_os.txt
 echo "$MY_BRAND_NAME" > $work_dir/bin/ddevice/brand.txt
 
-if [ ! -s "$work_dir/bin/ddevice/device_name.txt" ]; then 
-    echo "Xiaomi Device" > $work_dir/bin/ddevice/device_name.txt 
+if [ ! -s "$work_dir/bin/ddevice/device_name.txt" ]; then
+    echo "Xiaomi Device" > $work_dir/bin/ddevice/device_name.txt
 fi
 
 mods "Gathering Devices Infomations"
