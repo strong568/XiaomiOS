@@ -1,4 +1,4 @@
-work_dir=$(pwd)
+Work_dir=$(pwd)
 source $work_dir/functions.sh
 
 os_type=$(cat $work_dir/bin/ddevice/os_type.txt 2>/dev/null)
@@ -96,39 +96,37 @@ output_file="out/$final_zip_name"
 echo "$final_zip_name" > $work_dir/bin/ddevice/output_zip.txt
 
 # ============================================================
-# Tải lên Gofile.io (Lấy link tải nhanh cho Telegram)
+# Tải lên Pixeldrain (Lấy link tải xuất ra output_url.txt)
 # ============================================================
-upload "Đang kết nối API Gofile.io..."
+upload "Đang kết nối API Pixeldrain..."
 
-if [ -z "${GOFILE_TOKEN:-}" ]; then
-    upload "LOI: bien GOFILE_TOKEN chua duoc set (them vao GitHub Actions Secrets ten GOFILE_TOKEN)."
+if [ -z "${PIXELDRAIN_API_KEY:-}" ]; then
+    upload "CANH BAO: Bien PIXELDRAIN_API_KEY chua duoc set, tien hanh upload an danh (anonymous)..."
+    AUTH_HEADER=""
+else
+    AUTH_HEADER="-u :${PIXELDRAIN_API_KEY}"
+fi
+
+if [ ! -f "$output_file" ]; then
+    upload "LOI: Khong tim thay file output: $output_file"
     echo "" > $work_dir/bin/ddevice/output_url.txt
 else
-    GOFILE_SERVERS_RESPONSE=$(curl -s -H "Authorization: Bearer ${GOFILE_TOKEN}" "https://api.gofile.io/servers")
-    GOFILE_SERVER=$(echo "$GOFILE_SERVERS_RESPONSE" | grep -oP '"name":"\K[^"]+' | head -n 1)
+    upload "Bắt đầu tải file $final_zip_name lên Pixeldrain..."
+    
+    # Upload qua API Pixeldrain (PUT request qua Basic Auth)
+    UPLOAD_RESPONSE=$(curl -s -# -T "$output_file" $AUTH_HEADER "https://pixeldrain.com/api/file/$final_zip_name")
+    
+    # Bóc tách ID file từ JSON response
+    PIXELDRAIN_ID=$(echo "$UPLOAD_RESPONSE" | grep -oP '"id":"\K[^"]+' | head -n 1)
 
-    if [ -z "$GOFILE_SERVER" ]; then
-        GOFILE_SERVER="store1"
-    fi
-
-    upload "Bắt đầu upload file lên máy chủ: ${GOFILE_SERVER}.gofile.io"
-    upload "Quá trình này có thể mất vài phút tùy dung lượng ROM..."
-
-    # LƯU Ý: endpoint đúng là /contents/uploadfile (không phải /contents/upload)
-    # và phải kèm Authorization header, nếu không API trả về 404
-    UPLOAD_RESPONSE=$(curl -s \
-        -H "Authorization: Bearer ${GOFILE_TOKEN}" \
-        -F "file=@$output_file" \
-        "https://${GOFILE_SERVER}.gofile.io/contents/uploadfile")
-
-    GOFILE_LINK=$(echo "$UPLOAD_RESPONSE" | grep -oP '"downloadPage":"\K[^"]+')
-
-    if [ -n "$GOFILE_LINK" ]; then
-        upload "Tải lên Gofile thành công! Link: $GOFILE_LINK"
-        # Ghi đè link Gofile để xuất lên Nút Telegram
-        echo "$GOFILE_LINK" > $work_dir/bin/ddevice/output_url.txt
+    if [ -n "$PIXELDRAIN_ID" ] && [ "$PIXELDRAIN_ID" != "null" ]; then
+        PIXELDRAIN_LINK="https://pixeldrain.com/u/$PIXELDRAIN_ID"
+        upload "Tải lên Pixeldrain thành công! Link: $PIXELDRAIN_LINK"
+        
+        # Ghi link vào output_url.txt để notify.py tự lấy gửi đi
+        echo "$PIXELDRAIN_LINK" > $work_dir/bin/ddevice/output_url.txt
     else
-        upload "Lỗi khi upload lên Gofile. Dữ liệu trả về: $UPLOAD_RESPONSE"
+        upload "Lỗi khi upload lên Pixeldrain. Phản hồi: $UPLOAD_RESPONSE"
         echo "" > $work_dir/bin/ddevice/output_url.txt
     fi
 fi
@@ -138,6 +136,6 @@ rm -rf $work_dir/out
 rm -rf $work_dir/build
 
 upload "Build ${os_type}_${polyxver} for ${device_f} successful!"
-if [ -n "$GOFILE_LINK" ]; then
-    upload "Download (Fast): $GOFILE_LINK"
+if [ -n "$PIXELDRAIN_LINK" ]; then
+    upload "Download: $PIXELDRAIN_LINK"
 fi
