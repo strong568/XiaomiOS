@@ -81,23 +81,9 @@ jobs:
           python notify.py pack "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
           sudo bash packROM.sh
 
-      - name: Setup rclone config and SSH key
-        run: |
-          # 1. Cài đặt cho user runner
-          mkdir -p /home/runner/.config/rclone
-          echo "${{ secrets.RCLONE_CONFIG_DATA }}" > /home/runner/.config/rclone/rclone.conf
-          mkdir -p /home/runner/.ssh
-          echo "${{ secrets.SF_SSH_KEY }}" > /home/runner/.ssh/sf_upload_key
-          chmod 600 /home/runner/.ssh/sf_upload_key
-          
-          # 2. Copy cấu hình sang cho user root
-          sudo mkdir -p /root/.config/rclone
-          sudo cp /home/runner/.config/rclone/rclone.conf /root/.config/rclone/rclone.conf
-          sudo mkdir -p /root/.ssh
-          sudo cp /home/runner/.ssh/sf_upload_key /root/.ssh/sf_upload_key
-          sudo chmod 600 /root/.ssh/sf_upload_key
-
       - name: Upload ROM...
+        env:
+          GOFILE_TOKEN: ${{ secrets.GOFILE_TOKEN }}
         run: |
           python notify.py upload "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
           sudo -E bash uploadROM.sh
