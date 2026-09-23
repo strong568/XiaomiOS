@@ -11,7 +11,7 @@ name=$(cat $work_dir/bin/ddevice/name_devices.txt)
 # ========================================================
 # ĐOẠN MÃ XỬ LÝ LỖI KHÔNG TÌM THẤY TÊN THIẾT BỊ
 if [[ "${device_code,,}" == "annibale" ]]; then
-    name="Xiaomi 15 Pro"
+    name="Redmi K90"
     echo "$name" > $work_dir/bin/ddevice/name_devices.txt
 elif [[ "$name" == "Không tìm thấy key" || -z "$name" ]]; then
     name=$(echo "$device_code" | tr '[:lower:]' '[:upper:]')
