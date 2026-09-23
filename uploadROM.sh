@@ -1,11 +1,5 @@
 work_dir=$(pwd)
 source $work_dir/functions.sh
-RCLONE_CONFIG_1DRIVE="$work_dir/rclone.conf"
-
-# Cấu hình SourceForge
-SF_REMOTE="sourceforge"                        # tên remote khai báo trong rclone.conf (backend: sftp)
-SF_PROJECT="iabi"                         # tên project của bạn trên SourceForge
-SF_BASE_PATH="/home/frs/project/${SF_PROJECT}" # đường dẫn gốc File Release System của SourceForge
 
 os_type=$(cat $work_dir/bin/ddevice/os_type.txt 2>/dev/null)
 base_rom_code=$(cat $work_dir/bin/ddevice/base_rom_code.txt 2>/dev/null)
@@ -98,35 +92,39 @@ mv "out/${os_type}_${device_f}_${base_rom_code}.zip" "out/$final_zip_name"
 
 repack "Build completed"
 repack "Output: $(pwd)/out/$final_zip_name"
-upload "Uploading"
 output_file="out/$final_zip_name"
 echo "$final_zip_name" > $work_dir/bin/ddevice/output_zip.txt
 
-uploaddir=$true_os
-
 # ============================================================
-# Upload lên SourceForge (File Release System) qua rclone SFTP
+# Tải lên Gofile.io (Lấy link tải nhanh cho Telegram)
 # ============================================================
-sf_remote_path="${SF_BASE_PATH}/${uploaddir}/${polyxver}/${device_f}"
+upload "Đang kết nối API Gofile.io..."
+GOFILE_SERVER=$(curl -s https://api.gofile.io/servers | grep -oP '"name":"\K[^"]+' | head -n 1)
 
-upload "Uploading to SourceForge..."
-rclone -v --config="$RCLONE_CONFIG_1DRIVE" copy "$output_file" "${SF_REMOTE}:${sf_remote_path}/" \
-    --sftp-set-modtime=false \
-    --transfers 1 \
-    --retries 3 \
-    --timeout 30m \
-    --contimeout 1m || {
-    upload "Lỗi khi upload file lên SourceForge!"
-    exit 1
-}
+if [ -z "$GOFILE_SERVER" ]; then
+    GOFILE_SERVER="store1"
+fi
 
-# Link tải trực tiếp trên SourceForge (dùng cho nút Telegram nếu có)
-sf_download_url="https://sourceforge.net/projects/${SF_PROJECT}/files/${uploaddir}/${polyxver}/${device_f}/${final_zip_name}/download"
-echo "$sf_download_url" > $work_dir/bin/ddevice/output_url.txt
+upload "Bắt đầu upload file lên máy chủ: ${GOFILE_SERVER}.gofile.io"
+upload "Quá trình này có thể mất vài phút tùy dung lượng ROM..."
+
+UPLOAD_RESPONSE=$(curl -s -F "file=@$output_file" "https://${GOFILE_SERVER}.gofile.io/contents/upload")
+GOFILE_LINK=$(echo "$UPLOAD_RESPONSE" | grep -oP '"downloadPage":"\K[^"]+')
+
+if [ -n "$GOFILE_LINK" ]; then
+    upload "Tải lên Gofile thành công! Link: $GOFILE_LINK"
+    # Ghi đè link Gofile để xuất lên Nút Telegram
+    echo "$GOFILE_LINK" > $work_dir/bin/ddevice/output_url.txt
+else
+    upload "Lỗi khi upload lên Gofile. Dữ liệu trả về: $UPLOAD_RESPONSE"
+    echo "" > $work_dir/bin/ddevice/output_url.txt
+fi
 
 upload "Clean Workflow.."
 rm -rf $work_dir/out
 rm -rf $work_dir/build
 
 upload "Build ${os_type}_${polyxver} for ${device_f} successful!"
-upload "Download: $sf_download_url"
+if [ -n "$GOFILE_LINK" ]; then
+    upload "Download (Fast): $GOFILE_LINK"
+fi
