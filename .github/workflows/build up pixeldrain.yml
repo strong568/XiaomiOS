@@ -1,4 +1,4 @@
-name: PenguinOS Xiaomi ROM Build
+name: PenguinOS ROM Build
 
 on:
   workflow_dispatch:
@@ -17,8 +17,9 @@ jobs:
   Initialize:
     runs-on: ubuntu-latest
     env:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+      # Truyền giá trị giả để notify.py không bị crash do thiếu biến môi trường
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || 'disabled' }}
+      TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID || '0' }}
       PIXELDRAIN_API_KEY: ${{ secrets.PIXELDRAIN_API_KEY }}
     steps:
       - name: Maximize build space
@@ -45,7 +46,7 @@ jobs:
       - name: Start Notify
         run: |
           pip install requests
-          python notify.py start "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
+          python notify.py start "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}" || true
 
       - name: Set up Time
         run: |
@@ -74,25 +75,32 @@ jobs:
 
       - name: Pack ROM...
         run: |
-          python notify.py pack "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
+          python notify.py pack "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}" || true
           sudo bash packROM.sh
 
       - name: Upload ROM to Pixeldrain...
         run: |
-          python notify.py upload "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
+          python notify.py upload "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}" || true
           
-          # Tìm file ROM đuôi .zip sau khi đóng gói
+          # Tìm file zip ROM vừa pack
           ROM_FILE=$(find . -maxdepth 2 -name "*.zip" ! -name "tools*" | head -n 1)
+          
+          if [ -z "$ROM_FILE" ]; then
+            echo "Lỗi: Không tìm thấy file ROM .zip nào!"
+            exit 1
+          fi
+
           FILE_NAME=$(basename "$ROM_FILE")
-          
           echo "Bắt đầu upload: $FILE_NAME"
+
           RESPONSE=$(curl -# -T "$ROM_FILE" -u ":$PIXELDRAIN_API_KEY" "https://pixeldrain.com/api/file/$FILE_NAME")
-          
+          echo "Response: $RESPONSE"
+
           FILE_ID=$(echo "$RESPONSE" | jq -r '.id')
           if [ "$FILE_ID" != "null" ] && [ -n "$FILE_ID" ]; then
             DOWNLOAD_URL="https://pixeldrain.com/u/$FILE_ID"
             echo "ROM_URL=$DOWNLOAD_URL" >> $GITHUB_ENV
-            echo "Upload thành công: $DOWNLOAD_URL"
+            echo "::notice title=Pixeldrain Download Link::$DOWNLOAD_URL"
           else
             echo "Lỗi upload Pixeldrain: $RESPONSE"
             exit 1
@@ -101,9 +109,9 @@ jobs:
       - name: Success Notification
         if: success()
         run: |
-          python notify.py success "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}" "$ROM_URL"
+          python notify.py success "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}" "$ROM_URL" || true
 
       - name: Failure Notification
         if: failure()
         run: |
-          python notify.py fail "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
+          python notify.py fail "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}" || true
