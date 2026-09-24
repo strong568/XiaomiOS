@@ -16,15 +16,15 @@ else
     rm -rf $isOriginHome
     mkdir -p $work_dir/build/baserom/images/product/priv-app/MiuiHome
     cp -rf $work_dir/bin/modfile/OS1/launcher/MiuiHome_14/* $work_dir/build/baserom/images/product/priv-app/MiuiHome
-    cp -rf $work_dir/bin/modfile/OS1/launcher/XiaomiEUExt $work_dir/build/baserom/images/product/priv-app/
-    cp -rf $work_dir/bin/modfile/OS1/launcher/permissions/privapp_whitelist_eu.xiaomi.ext.xml $work_dir/build/baserom/images/product/etc/permissions/
+    cp -rf $work_dir/bin/modfile/OS1/launcher/XiaomiExt $work_dir/build/baserom/images/product/priv-app/
+    cp -rf $work_dir/bin/modfile/OS1/launcher/permissions/privapp_whitelist_xiaomi.ext.xml $work_dir/build/baserom/images/product/etc/permissions/
     cp -rf $work_dir/bin/modfile/OS1/launcher/permissions/privapp_whitelist_com.miui.home.xml $work_dir/build/baserom/images/product/etc/permissions/
   elif [[ $rom_os == "OS1" && $androidVER == "13" ]];then 
     rm -rf $isOriginHome
     mkdir -p $work_dir/build/baserom/images/product/priv-app/MiuiHome
     cp -rf $work_dir/bin/modfile/OS1/launcher/MiuiHome_13/* $work_dir/build/baserom/images/product/priv-app/MiuiHome
-    cp -rf $work_dir/bin/modfile/OS1/launcher/XiaomiEUExt $work_dir/build/baserom/images/product/priv-app/
-    cp -rf $work_dir/bin/modfile/OS1/launcher/permissions/privapp_whitelist_eu.xiaomi.ext.xml $work_dir/build/baserom/images/product/etc/permissions/
+    cp -rf $work_dir/bin/modfile/OS1/launcher/XiaomiExt $work_dir/build/baserom/images/product/priv-app/
+    cp -rf $work_dir/bin/modfile/OS1/launcher/permissions/privapp_whitelist_xiaomi.ext.xml $work_dir/build/baserom/images/product/etc/permissions/
     cp -rf $work_dir/bin/modfile/OS1/launcher/permissions/privapp_whitelist_com.miui.home.xml $work_dir/build/baserom/images/product/etc/permissions/
   fi
 fi
