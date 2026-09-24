@@ -10,14 +10,31 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
 
     USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
-    # ==================== XỬ LÝ NGUỒN TẢI SOURCEFORGE ====================
-    if [[ "$baserom" == *"sourceforge.net"* ]]; then
+    # ==================== 1. XỬ LÝ LINK GOOGLE DRIVE ====================
+    if [[ "$baserom" == *"drive.google.com"* ]]; then
+        info "Google Drive link detected, using gdown..."
+        
+        # Cài đặt gdown nếu chưa có
+        if ! command -v gdown &> /dev/null; then
+            pip3 install -q gdown || python3 -m pip install -q gdown
+        fi
+
+        # Trích xuất ID file từ các dạng URL Google Drive
+        GDRIVE_ID=$(echo "$baserom" | grep -oP '(id=|\/d\/)\K[a-zA-Z0-9_-]+')
+
+        if [ -n "$GDRIVE_ID" ]; then
+            gdown --fuzzy "https://drive.google.com/uc?id=${GDRIVE_ID}"
+        else
+            gdown --fuzzy "$baserom"
+        fi
+
+    # ==================== 2. XỬ LÝ NGUỒN TẢI SOURCEFORGE ====================
+    elif [[ "$baserom" == *"sourceforge.net"* ]]; then
         info "SourceForge detected. Resolving direct mirror host..."
 
         clean_sf_url="${baserom%%\?*}"
         clean_sf_url="${clean_sf_url%/download}"
 
-        # Bóc tách tên project và đường dẫn subpath
         project_name=$(echo "$clean_sf_url" | sed -n 's|.*projects/\([^/]*\)/files/.*|\1|p')
         file_subpath=$(echo "$clean_sf_url" | sed -n 's|.*projects/[^/]*/files/\(.*\)|\1|p')
 
@@ -26,11 +43,10 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
             expected_filename="rom_baserom.zip"
         fi
 
-        # Danh sách mirror trực tiếp không chặn 403 đối với CI/CD
         MIRRORS=(
             "https://master.dl.sourceforge.net/project/${project_name}/${file_subpath}"
             "https://versaweb.dl.sourceforge.net/project/${project_name}/${file_subpath}"
-            "https://netix.dl.sourceforge.net/project/${project_name}/${file_subpath}"
+            "https://twds.dl.sourceforge.net/project/${project_name}/${file_subpath}"
             "https://downloads.sourceforge.net/project/${project_name}/${file_subpath}"
         )
 
@@ -40,7 +56,6 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
             info "Trying mirror: $mirror_url"
             rm -f "$expected_filename"
             
-            # Tải thử bằng aria2c (nếu gặp 403 sẽ dừng nhanh để thử mirror tiếp theo)
             aria2c --header="User-Agent: $USER_AGENT" \
                    --header="Referer: https://sourceforge.net/" \
                    --check-certificate=false \
@@ -53,7 +68,6 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
                    -o "$expected_filename" \
                    "$mirror_url"
 
-            # Kiểm tra xem file tải về có phải là file zip thật (> 100MB) không
             if [ -f "$expected_filename" ]; then
                 filesize=$(stat -c%s "$expected_filename" 2>/dev/null || stat -f%z "$expected_filename" 2>/dev/null || echo 0)
                 if [ "$filesize" -gt 104857600 ]; then
@@ -62,20 +76,19 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
                     info "Download successfully from mirror: $mirror_url"
                     break
                 else
-                    warn "Tải thất bại (file nhận được là HTML hoặc bị lỗi kích thước: $filesize bytes)."
+                    warn "Tải thất bại (file nhận được không hợp lệ: $filesize bytes)."
                     rm -f "$expected_filename"
                 fi
             fi
         done
 
         if [ "$download_success" = false ]; then
-            error "Tất cả các mirror của SourceForge đều bị chặn trên GitHub Runner!"
-            error "Vui lòng upload ROM lên Google Drive, Pixeldrain, HuggingFace hoặc dùng link OTA/Aliyun chính thức."
+            error "Tất cả các mirror của SourceForge đều bị chặn trên GitHub Runner! hãy dùng gdrive pixeldrain"
             exit 1
         fi
 
+    # ==================== 3. LINK TẢI TRỰC TIẾP KHÁC ====================
     else
-        # Link tải trực tiếp thông thường (Aliyun OTA, CDN...)
         aria2c --max-download-limit=1024M \
                --file-allocation=none \
                --check-certificate=false \
@@ -85,14 +98,15 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
                --content-disposition \
                -U "$USER_AGENT" \
                "${baserom}"
+    fi
 
-        downloaded_zip=$(ls -S *.zip 2>/dev/null | head -n 1)
-        if [ -n "$downloaded_zip" ] && [ -f "$downloaded_zip" ]; then
-            baserom="$downloaded_zip"
-        else
-            error "Download error: Không tìm thấy file zip!"
-            exit 1
-        fi
+    # Bắt file zip ROM vừa tải về (ưu tiên file dung lượng lớn nhất)
+    downloaded_zip=$(ls -S *.zip 2>/dev/null | head -n 1)
+    if [ -n "$downloaded_zip" ] && [ -f "$downloaded_zip" ]; then
+        baserom="$downloaded_zip"
+    else
+        error "Download error: Không tìm thấy file zip ROM hợp lệ!"
+        exit 1
     fi
 
     info "BASEROM: ${baserom}"
@@ -103,8 +117,6 @@ else
     error "BASEROM: Invalid parameter"
     exit 1
 fi
-
-
 
 # ==================== Nhận diện thông tin ROM ====================
 if [ "$(echo "$baserom" | grep 'miui_')" != "" ]; then
