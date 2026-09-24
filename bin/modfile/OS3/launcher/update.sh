@@ -16,8 +16,8 @@ else
     rm -rf $isOriginHome
     mkdir -p $work_dir/build/baserom/images/product/priv-app/MiuiHome
     cp -rf $work_dir/bin/modfile/OS3/launcher/MiuiHome/* $work_dir/build/baserom/images/product/priv-app/MiuiHome
-    cp -rf $work_dir/bin/modfile/OS3/launcher/XiaomiEUExt $work_dir/build/baserom/images/product/priv-app/
-    cp -rf $work_dir/bin/modfile/OS3/launcher/permissions/privapp_whitelist_eu.xiaomi.ext.xml $work_dir/build/baserom/images/product/etc/permissions/
+    cp -rf $work_dir/bin/modfile/OS3/launcher/XiaomiExt $work_dir/build/baserom/images/product/priv-app/
+    cp -rf $work_dir/bin/modfile/OS3/launcher/permissions/privapp_whitelist_xiaomi.ext.xml $work_dir/build/baserom/images/product/etc/permissions/
     cp -rf $work_dir/bin/modfile/OS3/launcher/permissions/privapp_whitelist_com.miui.home.xml $work_dir/build/baserom/images/product/etc/permissions/
  fi
 fi
