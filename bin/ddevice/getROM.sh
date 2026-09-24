@@ -10,68 +10,64 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
 
     USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
-    # Xử lý đặc thù cho SourceForge để không bị chặn mã 403 và không bị tải nhầm trang HTML
+    # Chuyển đổi link SourceForge thành Direct Mirror URL chuẩn
     if [[ "$baserom" == *"sourceforge.net"* ]]; then
-        [[ "$baserom" != *"/download" ]] && baserom="${baserom}/download"
+        # Chuẩn hóa link: bỏ đuôi /download và tham số ?...
+        clean_sf_url="${baserom%%\?*}"
+        clean_sf_url="${clean_sf_url%/download}"
         
-        info "SourceForge direct file detected, resolving redirect mirror..."
-        
-        # Bóc tách tên file dự kiến từ URL
-        expected_filename=$(echo "$baserom" | grep -oP 'files/[^/]+/(?:[^/]+/)*\K[^/]+(?=/download)')
-        if [ -z "$expected_filename" ]; then
-            expected_filename=$(basename "${baserom%/download}")
-        fi
+        # Bóc tách tên project và đường dẫn file
+        # Ví dụ: https://sourceforge.net/projects/xiaomi-eu-multilang-miui-roms/files/xiaomi.eu/...
+        project_name=$(echo "$clean_sf_url" | sed -n 's|.*projects/\([^/]*\)/files/.*|\1|p')
+        file_subpath=$(echo "$clean_sf_url" | sed -n 's|.*projects/[^/]*/files/\(.*\)|\1|p')
 
-        # Tìm URL mirror trực tiếp qua header Location
-        DIRECT_URL=$(curl -sIL -A "$USER_AGENT" -e "https://sourceforge.net/" "$baserom" | grep -i "^location:" | tail -n 1 | awk '{print $2}' | tr -d '\r\n')
-        
-        if [[ -n "$DIRECT_URL" && "$DIRECT_URL" =~ ^https?:// ]]; then
-            info "Downloading from resolved mirror: $DIRECT_URL"
-            aria2c --header="User-Agent: $USER_AGENT" \
-                   --header="Referer: https://sourceforge.net/" \
-                   --check-certificate=false \
-                   --allow-overwrite=true \
-                   -x16 -s16 -j16 \
-                   -o "$expected_filename" \
-                   "$DIRECT_URL" || curl -L -k -A "$USER_AGENT" -e "https://sourceforge.net/" -o "$expected_filename" "$DIRECT_URL"
-        else
-            info "Fallback: Direct stream with curl..."
-            curl -L -k -A "$USER_AGENT" -e "https://sourceforge.net/" -o "$expected_filename" "$baserom"
+        if [[ -n "$project_name" && -n "$file_subpath" ]]; then
+            baserom="https://downloads.sourceforge.net/project/${project_name}/${file_subpath}"
+            info "SourceForge direct mirror converted: $baserom"
         fi
-    else
-        # Link tải trực tiếp bình thường (Aliyun, direct host...)
-        aria2c --max-download-limit=1024M \
-               --file-allocation=none \
-               --check-certificate=false \
-               --allow-overwrite=true \
-               --auto-file-renaming=false \
-               -s16 -x16 -j16 \
-               --content-disposition \
-               -U "$USER_AGENT" \
-               "${baserom}"
     fi
 
-    # Ưu tiên lấy file zip có dung lượng lớn nhất vừa tải về
-    downloaded_zip=$(ls -S *.zip 2>/dev/null | head -n 1)
+    # Tải file trực tiếp bằng aria2c (Hỗ trợ tự động chuyển hướng và giữ kết nối)
+    aria2c --max-download-limit=1024M \
+           --file-allocation=none \
+           --check-certificate=false \
+           --allow-overwrite=true \
+           --auto-file-renaming=false \
+           --max-file-not-found=5 \
+           --max-tries=5 \
+           --retry-wait=2 \
+           -s16 -x16 -j16 \
+           --content-disposition \
+           -U "$USER_AGENT" \
+           "${baserom}" || {
+               info "aria2c failed, falling back to curl -L..."
+               curl -L -k -A "$USER_AGENT" -O -J "${baserom}"
+           }
+
+    # Bắt file zip có kích thước lớn nhất (> 500MB) vừa tải về trong thư mục
+    downloaded_zip=$(find . -maxdepth 1 -type f -name "*.zip" -size +500M -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -f2- -d" " | sed 's|^\./||')
 
     if [ -n "$downloaded_zip" ] && [ -f "$downloaded_zip" ]; then
         baserom="$downloaded_zip"
-    elif [ -f "$work_dir/topaz-ota_full-OS3.0.2.0.WMGCNXM-user-16.0-b487e82659.zip" ]; then
-        baserom="topaz-ota_full-OS3.0.2.0.WMGCNXM-user-16.0-b487e82659.zip"
-    elif [ -f "$work_dir/munch-ota_full-OS2.0.215.0.VLMCNXM-user-15.0-7df6d5ee94.zip" ]; then
-        baserom="munch-ota_full-OS2.0.215.0.VLMCNXM-user-15.0-7df6d5ee94.zip"
     else
-        error "Download error!"
-        exit 1
+        # Dự phòng tìm file zip bất kỳ vừa tạo nếu file dung lượng nhỏ hơn
+        downloaded_zip=$(ls -t *.zip 2>/dev/null | head -n 1)
+        if [ -n "$downloaded_zip" ] && [ -f "$downloaded_zip" ]; then
+            baserom="$downloaded_zip"
+        else
+            error "Download error: No zip file was downloaded!"
+            exit 1
+        fi
     fi
-    info "BASEROM: ${baserom}"
+    info "BASEROM downloaded: ${baserom}"
 
 elif [ -f "${baserom}" ]; then
-    info "BASEROM: ${baserom}"
+    info "BASEROM local file: ${baserom}"
 else
     error "BASEROM: Invalid parameter"
     exit 1
 fi
+
 
 # ==================== Nhận diện thông tin ROM ====================
 if [ "$(echo "$baserom" | grep 'miui_')" != "" ]; then
