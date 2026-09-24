@@ -6,7 +6,7 @@ base_img_dir="$work_dir/build/baserom/images"
 extract_dir="$work_dir/framework_dump"
 output_dir="$work_dir/out_artifacts"
 
-# $1: Nhãn (stock hoặc mod), mặc định là generic
+# $1: Nhãn (stock hoặc mod), mặc định là dump
 STAGE_TAG="${1:-dump}"
 # $2: URL của ROM (hoặc lấy từ biến môi trường INPUT_URL)
 ROM_URL="${2:-$INPUT_URL}"
@@ -21,7 +21,7 @@ rm -rf "$extract_dir"
 mkdir -p "$extract_dir"
 mkdir -p "$output_dir"
 
-# Danh sách file cần lấy
+# 1. Danh sách file cơ sở cần lấy
 declare -A FILES_TO_COPY=(
     ["system/framework/framework.jar"]="system/framework/framework.jar"
     ["system/framework/services.jar"]="system/framework/services.jar"
@@ -30,17 +30,31 @@ declare -A FILES_TO_COPY=(
     ["system_ext/framework/miui-services.jar"]="system_ext/framework/miui-services.jar"
     ["system_ext/etc/build.prop"]="system_ext/etc/build.prop"
     ["system_ext/etc/cust_prop_white_keys_list"]="system_ext/etc/cust_prop_white_keys_list"
+    ["product/etc/build.prop"]="product/etc/build.prop"
 )
 
+# 2. Tự động quét và nạp toàn bộ vendor/etc/fstab.* vào mảng
+VENDOR_ETC_DIR="$base_img_dir/vendor/etc"
+if [ -d "$VENDOR_ETC_DIR" ]; then
+    for fstab_file in "$VENDOR_ETC_DIR"/fstab.*; do
+        if [ -f "$fstab_file" ]; then
+            rel_fstab="vendor/etc/$(basename "$fstab_file")"
+            FILES_TO_COPY["$rel_fstab"]="$rel_fstab"
+        fi
+    done
+fi
+
+# 3. Tiến hành sao chép các file
 for rel_path in "${!FILES_TO_COPY[@]}"; do
     src_file="$base_img_dir/$rel_path"
     dest_file="$extract_dir/$rel_path"
 
-    # Kiểm tra trường hợp phân vùng lồng system/system
-    if [ ! -f "$src_file" ] && [[ "$rel_path" == system/* ]]; then
-        alt_path="system/${rel_path}"
-        if [ -f "$base_img_dir/$alt_path" ]; then
-            src_file="$base_img_dir/$alt_path"
+    # Kiểm tra trường hợp phân vùng lồng (system/system/... hoặc system_ext/system_ext/...)
+    if [ ! -f "$src_file" ]; then
+        if [[ "$rel_path" == system/* ]] && [ -f "$base_img_dir/system/$rel_path" ]; then
+            src_file="$base_img_dir/system/$rel_path"
+        elif [[ "$rel_path" == system_ext/* ]] && [ -f "$base_img_dir/system_ext/$rel_path" ]; then
+            src_file="$base_img_dir/system_ext/$rel_path"
         fi
     fi
 
