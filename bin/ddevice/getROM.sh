@@ -14,19 +14,18 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
     if [[ "$baserom" == *"drive.google.com"* ]]; then
         info "Google Drive link detected, using gdown..."
         
-        # Cài đặt gdown nếu chưa có
-        if ! command -v gdown &> /dev/null; then
-            pip3 install -q gdown || python3 -m pip install -q gdown
-        fi
+        # Cài đặt/cập nhật gdown
+        python3 -m pip install -q --no-cache-dir gdown 2>/dev/null || pip3 install -q gdown
 
-        # Trích xuất ID file từ các dạng URL Google Drive
+        # Bóc tách ID file từ URL
         GDRIVE_ID=$(echo "$baserom" | grep -oP '(id=|\/d\/)\K[a-zA-Z0-9_-]+')
 
         if [ -n "$GDRIVE_ID" ]; then
-            gdown --fuzzy "https://drive.google.com/uc?id=${GDRIVE_ID}"
+            gdown "https://drive.google.com/uc?id=${GDRIVE_ID}"
         else
-            gdown --fuzzy "$baserom"
+            gdown "$baserom"
         fi
+
 
     # ==================== 2. XỬ LÝ NGUỒN TẢI SOURCEFORGE ====================
     elif [[ "$baserom" == *"sourceforge.net"* ]]; then
