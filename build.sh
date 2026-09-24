@@ -163,14 +163,16 @@ fi
 # ==================== FIX TÊN CODENAME THIẾT BỊ ====================
 detected_codename=""
 
+# Ưu tiên 1: Lấy từ product/etc/build.prop hoặc vendor (chứa codename máy thật, tránh chữ missi của system)
 if [ -f "$work_dir/build/baserom/images/product/etc/build.prop" ]; then
     detected_codename=$(grep -m1 "^ro.product.product.device=" "$work_dir/build/baserom/images/product/etc/build.prop" | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
 elif [ -f "$work_dir/build/baserom/images/vendor/build.prop" ]; then
     detected_codename=$(grep -m1 "^ro.product.vendor.device=" "$work_dir/build/baserom/images/vendor/build.prop" | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
 fi
 
+# Ưu tiên 2: Nếu lấy ra missi hoặc rỗng thì bóc thẳng từ chuỗi baserom/tên file zip
 if [[ -z "$detected_codename" || "$detected_codename" == "missi" ]]; then
-    detected_codename=$(echo "$baserom" | grep -o -i -E "(peridot|onyx|garnet|corot|duchamp|manet|houji|shennong|munch)" | head -n 1 | tr '[:upper:]' '[:lower:]')
+    detected_codename=$(echo "$baserom" | grep -o -i -E "(peridot|onyx|garnet|corot|duchamp|manet|houji|shennong)" | head -n 1 | tr '[:upper:]' '[:lower:]')
 fi
 
 if [ -n "$detected_codename" ]; then
@@ -180,6 +182,7 @@ fi
 echo "$device_f" > $work_dir/bin/ddevice/device_f.txt
 getvar=$(cat $work_dir/bin/ddevice/device_f.txt)
 # ===================================================================
+
 
 rm -rf config
 if [ -f "$baserom" ]; then rm -rf "$baserom"; fi

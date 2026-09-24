@@ -99,19 +99,25 @@ zip -r "../${zip_base_name}" ./*
 popd > /dev/null || exit 1
 
 # Chuẩn hóa tên file xuất xưởng
+# 1. Lấy ngày tháng năm hiện tại (YYYYMMDD)
 current_date=$(date +"%Y%m%d")
-device_upper=$(echo "$device_f" | tr '[:lower:]' '[:upper:]')
-clean_rom_code=${base_rom_code#OS}
-if [ -z "$clean_rom_code" ]; then
-    clean_rom_code="MOD"
-fi
 
-final_zip_name="XiaomiOS_${device_upper}_${clean_rom_code}_${current_date}.zip"
+# 2. Giữ nguyên codename chữ thường (ví dụ: peridot)
+device_lower=$(echo "$device_f" | tr '[:upper:]' '[:lower:]')
 
-# Đổi tên file zip hoàn chỉnh trong thư mục out
-if [ -f "$work_dir/out/${zip_base_name}" ]; then
-    mv -f "$work_dir/out/${zip_base_name}" "$work_dir/out/${final_zip_name}"
-fi
+# 3. Giữ nguyên toàn bộ mã ROM gốc (không cắt chữ OS)
+rom_code="$base_rom_code"
+
+# 4. Ghép thành tên file: XiaomiOS_<device>_<rom_code>_<date>.zip
+final_zip_name="XiaomiOS_${device_lower}_${rom_code}_${current_date}.zip"
+
+# Đổi tên file zip hoàn chỉnh
+mv "out/${os_type}_${device_f}_${base_rom_code}.zip" "out/$final_zip_name"
+
+
+# Đổi tên file zip hoàn chỉnh
+mv "out/${os_type}_${device_f}_${base_rom_code}.zip" "out/$final_zip_name"
+
 
 output_file="$work_dir/out/$final_zip_name"
 repack "Build completed"
