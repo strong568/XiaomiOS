@@ -10,14 +10,27 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
 
     USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
-    # ==================== 1. XỬ LÝ LINK GOOGLE DRIVE ====================
-    if [[ "$baserom" == *"drive.google.com"* ]]; then
+    # ==================== 1. XỬ LÝ LINK PIXELDRAIN ====================
+    if [[ "$baserom" == *"pixeldrain.com"* ]]; then
+        info "Pixeldrain link detected, downloading via API..."
+        pixel_id=$(echo "$baserom" | grep -oP '(u\/|file\/)\K[a-zA-Z0-9]+')
+        if [ -n "$pixel_id" ]; then
+            direct_pixel="https://pixeldrain.com/api/file/${pixel_id}"
+            aria2c --header="User-Agent: $USER_AGENT" \
+                   --check-certificate=false \
+                   --allow-overwrite=true \
+                   --auto-file-renaming=false \
+                   --content-disposition \
+                   -s16 -x16 -j16 \
+                   "$direct_pixel" || curl -L -k -A "$USER_AGENT" -O -J "$direct_pixel"
+        fi
+
+    # ==================== 2. XỬ LÝ LINK GOOGLE DRIVE ====================
+    elif [[ "$baserom" == *"drive.google.com"* ]]; then
         info "Google Drive link detected, using gdown..."
         
-        # Cài đặt/cập nhật gdown
         python3 -m pip install -q --no-cache-dir gdown 2>/dev/null || pip3 install -q gdown
 
-        # Bóc tách ID file từ URL
         GDRIVE_ID=$(echo "$baserom" | grep -oP '(id=|\/d\/)\K[a-zA-Z0-9_-]+')
 
         if [ -n "$GDRIVE_ID" ]; then
@@ -26,8 +39,7 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
             gdown "$baserom"
         fi
 
-
-    # ==================== 2. XỬ LÝ NGUỒN TẢI SOURCEFORGE ====================
+    # ==================== 3. XỬ LÝ NGUỒN TẢI SOURCEFORGE ====================
     elif [[ "$baserom" == *"sourceforge.net"* ]]; then
         info "SourceForge detected. Resolving direct mirror host..."
 
@@ -82,11 +94,11 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
         done
 
         if [ "$download_success" = false ]; then
-            error "Tất cả các mirror của SourceForge đều bị chặn trên GitHub Runner! hãy dùng gdrive pixeldrain"
+            error "Tất cả các mirror của SourceForge đều bị chặn trên GitHub Runner!"
             exit 1
         fi
 
-    # ==================== 3. LINK TẢI TRỰC TIẾP KHÁC ====================
+    # ==================== 4. LINK TẢI TRỰC TIẾP KHÁC (OTA ALIYUN...) ====================
     else
         aria2c --max-download-limit=1024M \
                --file-allocation=none \
@@ -117,7 +129,7 @@ else
     exit 1
 fi
 
-# ==================== Nhận diện thông tin ROM ====================
+# ==================== NHẬN DIỆN THÔNG TIN ROM ====================
 if [ "$(echo "$baserom" | grep 'miui_')" != "" ]; then
     device_code=$(basename "$baserom" | cut -d '_' -f 2)
     base_rom_code=$(echo "$baserom" | awk -F'_' '{print $3}')
@@ -148,7 +160,7 @@ fi
 
 device_f=$(echo "$device_code" | sed 's/\(Global\|EEAGlobal\|INGlobal\|IDGlobal\|RUGlobal\|TWGlobal\|TRGlobal\|JPGlobal\)$//' | tr '[:upper:]' '[:lower:]')
 
-# ==================== Xác định khu vực (Region) ====================
+# ==================== XÁC ĐỊNH KHU VỰC (REGION) ====================
 info "Get Device Type"
 if echo "$device_code" | grep -q 'EEAGlobal'; then
     DEVICE_TYPE="EEAGlobal"
@@ -170,7 +182,7 @@ else
     DEVICE_TYPE="China"
 fi
 
-# ==================== Nhận diện OS ====================
+# ==================== NHẬN DIỆN OS ====================
 if echo "$base_rom_code" | grep -q "OS1"; then
     ROM_OS="OS1"
 elif echo "$base_rom_code" | grep -q "OS2"; then
