@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 baserom="$1"
 repo_name="$2"
 prefix_id="$3"
@@ -8,28 +10,22 @@ work_dir=$(pwd)
 # Import functions
 tools_dir=${work_dir}/bin/$(uname)/$(uname -m)
 export PATH=$(pwd)/bin/$(uname)/$(uname -m)/:$PATH
-chmod 777 ${work_dir}/bin/*
-chmod 777 ${work_dir}/bin/Linux/x86_64/*
+chmod 777 ${work_dir}/bin/* 2>/dev/null || true
+chmod 777 ${work_dir}/bin/Linux/x86_64/* 2>/dev/null || true
 source $work_dir/functions.sh
 
-if [[ $(git branch --show-current) == "beta" ]]; then
-    polyxver="$(cat Version)"
-	status="Development"
+if [[ $(git branch --show-current 2>/dev/null) == "beta" ]]; then
+    polyxver="$(cat Version 2>/dev/null || echo "1.0")"
+    status="Development"
 else
-    polyxver="$(cat Version)"
-	status="Official"
+    polyxver="$(cat Version 2>/dev/null || echo "1.0")"
+    status="Official"
 fi
 
-# Fix lỗi cấu hình gói apt/dpkg và cài đặt các phụ thuộc cần thiết
+# Cài đặt phụ thuộc cần thiết (đã bỏ libsparse-tools để tránh lỗi apt trên Ubuntu 24.04)
 sudo dpkg --configure -a 2>/dev/null || true
 sudo apt-get update -y
-#sudo apt-get install -y xmlstarlet aapt libc++1 libc++abi1 libsparse-tools
-
 sudo apt-get install -y xmlstarlet aapt zipalign p7zip-full libc++1 libc++abi1
-
-#sudo apt-get install -y xmlstarlet aapt zipalign libc++1 libc++abi1
-
-#sudo apt-get install -y xmlstarlet aapt libc++1 libc++abi1
 
 check unzip aria2c 7z zip java zipalign python3 zstd bc xmlstarlet aapt
 
@@ -80,7 +76,7 @@ else
 fi
 
 rm -rf app tmp config build/baserom/
-find . -type d -name 'miui_*' | xargs rm -rf
+find . -type d -name 'miui_*' -exec rm -rf {} + 2>/dev/null || true
 
 unpack "Files cleaned up."
 mkdir -p build/baserom/images/
@@ -95,7 +91,7 @@ elif [[ ${baserom_type} == 'br' ]]; then
     unzip "${baserom}" -d build/baserom >/dev/null 2>&1 || error "Extracting new.dat.br error"
     unpack "File new.dat.br extracted."
 elif [[ ${is_base_rom_eu} == true ]]; then
-    unpack "Extracting files from BASETROM [super.img]"
+    unpack "Extracting files from BASEROM [super.img]"
     unzip -q "${baserom}" '*super.img*' -d build/baserom/ || error "Extracting [super.img] error"
     
     super_dir=$(dirname $(find build/baserom -name "*super.img.0*" | head -n 1))
@@ -158,8 +154,6 @@ for part in ${super_list}; do
 done
 
 # Trích xuất Framework Gốc (Stock) ngay sau khi bung partition
-#bash "$work_dir/frameworkExtract.sh" stock "$baserom"
-
 if [ -f "$work_dir/frameworkExtract.sh" ]; then
     chmod +x "$work_dir/frameworkExtract.sh"
     bash "$work_dir/frameworkExtract.sh" stock "$baserom" || echo "[WARNING] Không thể trích xuất stock framework"
@@ -168,16 +162,14 @@ fi
 # ==================== FIX TÊN CODENAME THIẾT BỊ ====================
 detected_codename=""
 
-# Ưu tiên 1: Lấy từ product/etc/build.prop hoặc vendor (chứa codename máy thật, tránh chữ missi của system)
 if [ -f "$work_dir/build/baserom/images/product/etc/build.prop" ]; then
     detected_codename=$(grep -m1 "^ro.product.product.device=" "$work_dir/build/baserom/images/product/etc/build.prop" | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
 elif [ -f "$work_dir/build/baserom/images/vendor/build.prop" ]; then
     detected_codename=$(grep -m1 "^ro.product.vendor.device=" "$work_dir/build/baserom/images/vendor/build.prop" | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
 fi
 
-# Ưu tiên 2: Nếu lấy ra missi hoặc rỗng thì bóc thẳng từ chuỗi baserom/tên file zip
 if [[ -z "$detected_codename" || "$detected_codename" == "missi" ]]; then
-    detected_codename=$(echo "$baserom" | grep -o -i -E "(peridot|onyx|garnet|corot|duchamp|manet|houji|shennong)" | head -n 1 | tr '[:upper:]' '[:lower:]')
+    detected_codename=$(echo "$baserom" | grep -o -i -E "(peridot|onyx|garnet|corot|duchamp|manet|houji|shennong|munch)" | head -n 1 | tr '[:upper:]' '[:lower:]')
 fi
 
 if [ -n "$detected_codename" ]; then
@@ -192,7 +184,6 @@ rm -rf config
 if [ -f "$baserom" ]; then rm -rf "$baserom"; fi
 rm -rf build/baserom/payload.bin build/baserom/super.img
 
-# Kỹ thuật ép tên: Làm sạch hậu tố NT/INT và ép về tên thương hiệu riêng
 MY_BRAND_NAME="PenguinOS"
 echo "$MY_BRAND_NAME" > $work_dir/bin/ddevice/os_type.txt
 echo "$MY_BRAND_NAME" > $work_dir/bin/ddevice/rom_os.txt
@@ -224,7 +215,6 @@ CURRENT_CODENAME="$(cat $work_dir/bin/ddevice/device_f.txt 2>/dev/null)"
 if [[ "$CURRENT_CODENAME" =~ (pudding|pandora|popsicle|nezha) ]]; then
     info "Thiết bị thuộc Xiaomi 17 Series ($CURRENT_CODENAME): Giữ nguyên toàn bộ HyperOS/MIUI và version prop gốc để tránh lỗi camera."
 else
-    # Chỉ xóa/chuẩn hóa các chuỗi test nội bộ MIUINT/HyperNT
     info "Đang chuẩn hóa chuỗi MIUINT/HyperNT từ các file cấu hình..."
     find "$work_dir/build/baserom/images/" -type f -name "*.prop" -exec sed -i 's/MIUINT/MIUI/g' {} +
     find "$work_dir/build/baserom/images/" -type f -name "*.prop" -exec sed -i 's/HyperNT/HyperOS/g' {} +
