@@ -108,16 +108,23 @@ device_lower=$(echo "$device_f" | tr '[:upper:]' '[:lower:]')
 # 3. Giữ nguyên toàn bộ mã ROM gốc (không cắt chữ OS)
 rom_code="$base_rom_code"
 
-# 4. Ghép thành tên file: XiaomiOS_<device>_<rom_code>_<date>.zip
-final_zip_name="XiaomiOS_${device_lower}_${rom_code}_${current_date}.zip"
+# 4. Kiểm tra xem ROM gốc đầu vào có phải là xiaomi.eu hay không
+# Kiểm tra qua URL baserom hoặc cờ is_base_rom_eu
+if [[ "$baserom" == *"xiaomi.eu"* || "$is_base_rom_eu" == "true" ]]; then
+    # Xuất định dạng theo chuẩn xiaomi.eu
+    final_zip_name="XiaomiOS_xiaomi.eu_${device_lower}_${rom_code}_mod_${current_date}.zip"
+else
+    # Xuất định dạng chuẩn riêng XiaomiOS
+    final_zip_name="XiaomiOS_${device_lower}_${rom_code}_mod_${current_date}.zip"
+fi
 
-# Đổi tên file zip hoàn chỉnh
-mv "out/${os_type}_${device_f}_${base_rom_code}.zip" "out/$final_zip_name"
-
-
-# Đổi tên file zip hoàn chỉnh
-mv "out/${os_type}_${device_f}_${base_rom_code}.zip" "out/$final_zip_name"
-
+# Đổi tên file zip hoàn chỉnh trong thư mục out/
+if [ -f "out/${os_type}_${device_f}_${base_rom_code}.zip" ]; then
+    mv "out/${os_type}_${device_f}_${base_rom_code}.zip" "out/$final_zip_name"
+elif [ -f "out/$(ls -t out/*.zip 2>/dev/null | head -n 1)" ]; then
+    latest_zip=$(ls -t out/*.zip 2>/dev/null | head -n 1)
+    mv "$latest_zip" "out/$final_zip_name"
+fi
 
 output_file="$work_dir/out/$final_zip_name"
 repack "Build completed"
