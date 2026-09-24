@@ -10,63 +10,100 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
 
     USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
-    # Chuyển đổi link SourceForge thành Direct Mirror URL chuẩn
+    # ==================== XỬ LÝ NGUỒN TẢI SOURCEFORGE ====================
     if [[ "$baserom" == *"sourceforge.net"* ]]; then
-        # Chuẩn hóa link: bỏ đuôi /download và tham số ?...
+        info "SourceForge detected. Resolving direct mirror host..."
+
         clean_sf_url="${baserom%%\?*}"
         clean_sf_url="${clean_sf_url%/download}"
-        
-        # Bóc tách tên project và đường dẫn file
-        # Ví dụ: https://sourceforge.net/projects/xiaomi-eu-multilang-miui-roms/files/xiaomi.eu/...
+
+        # Bóc tách tên project và đường dẫn subpath
         project_name=$(echo "$clean_sf_url" | sed -n 's|.*projects/\([^/]*\)/files/.*|\1|p')
         file_subpath=$(echo "$clean_sf_url" | sed -n 's|.*projects/[^/]*/files/\(.*\)|\1|p')
 
-        if [[ -n "$project_name" && -n "$file_subpath" ]]; then
-            baserom="https://downloads.sourceforge.net/project/${project_name}/${file_subpath}"
-            info "SourceForge direct mirror converted: $baserom"
+        expected_filename=$(basename "$file_subpath")
+        if [ -z "$expected_filename" ]; then
+            expected_filename="rom_baserom.zip"
         fi
-    fi
 
-    # Tải file trực tiếp bằng aria2c (Hỗ trợ tự động chuyển hướng và giữ kết nối)
-    aria2c --max-download-limit=1024M \
-           --file-allocation=none \
-           --check-certificate=false \
-           --allow-overwrite=true \
-           --auto-file-renaming=false \
-           --max-file-not-found=5 \
-           --max-tries=5 \
-           --retry-wait=2 \
-           -s16 -x16 -j16 \
-           --content-disposition \
-           -U "$USER_AGENT" \
-           "${baserom}" || {
-               info "aria2c failed, falling back to curl -L..."
-               curl -L -k -A "$USER_AGENT" -O -J "${baserom}"
-           }
+        # Danh sách mirror trực tiếp không chặn 403 đối với CI/CD
+        MIRRORS=(
+            "https://master.dl.sourceforge.net/project/${project_name}/${file_subpath}"
+            "https://versaweb.dl.sourceforge.net/project/${project_name}/${file_subpath}"
+            "https://netix.dl.sourceforge.net/project/${project_name}/${file_subpath}"
+            "https://downloads.sourceforge.net/project/${project_name}/${file_subpath}"
+        )
 
-    # Bắt file zip có kích thước lớn nhất (> 500MB) vừa tải về trong thư mục
-    downloaded_zip=$(find . -maxdepth 1 -type f -name "*.zip" -size +500M -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -f2- -d" " | sed 's|^\./||')
+        download_success=false
 
-    if [ -n "$downloaded_zip" ] && [ -f "$downloaded_zip" ]; then
-        baserom="$downloaded_zip"
+        for mirror_url in "${MIRRORS[@]}"; do
+            info "Trying mirror: $mirror_url"
+            rm -f "$expected_filename"
+            
+            # Tải thử bằng aria2c (nếu gặp 403 sẽ dừng nhanh để thử mirror tiếp theo)
+            aria2c --header="User-Agent: $USER_AGENT" \
+                   --header="Referer: https://sourceforge.net/" \
+                   --check-certificate=false \
+                   --allow-overwrite=true \
+                   --auto-file-renaming=false \
+                   --max-tries=2 \
+                   --retry-wait=1 \
+                   --timeout=15 \
+                   -s16 -x16 -j16 \
+                   -o "$expected_filename" \
+                   "$mirror_url"
+
+            # Kiểm tra xem file tải về có phải là file zip thật (> 100MB) không
+            if [ -f "$expected_filename" ]; then
+                filesize=$(stat -c%s "$expected_filename" 2>/dev/null || stat -f%z "$expected_filename" 2>/dev/null || echo 0)
+                if [ "$filesize" -gt 104857600 ]; then
+                    download_success=true
+                    baserom="$expected_filename"
+                    info "Download successfully from mirror: $mirror_url"
+                    break
+                else
+                    warn "Tải thất bại (file nhận được là HTML hoặc bị lỗi kích thước: $filesize bytes)."
+                    rm -f "$expected_filename"
+                fi
+            fi
+        done
+
+        if [ "$download_success" = false ]; then
+            error "Tất cả các mirror của SourceForge đều bị chặn trên GitHub Runner!"
+            error "Vui lòng upload ROM lên Google Drive, Pixeldrain, HuggingFace hoặc dùng link OTA/Aliyun chính thức."
+            exit 1
+        fi
+
     else
-        # Dự phòng tìm file zip bất kỳ vừa tạo nếu file dung lượng nhỏ hơn
-        downloaded_zip=$(ls -t *.zip 2>/dev/null | head -n 1)
+        # Link tải trực tiếp thông thường (Aliyun OTA, CDN...)
+        aria2c --max-download-limit=1024M \
+               --file-allocation=none \
+               --check-certificate=false \
+               --allow-overwrite=true \
+               --auto-file-renaming=false \
+               -s16 -x16 -j16 \
+               --content-disposition \
+               -U "$USER_AGENT" \
+               "${baserom}"
+
+        downloaded_zip=$(ls -S *.zip 2>/dev/null | head -n 1)
         if [ -n "$downloaded_zip" ] && [ -f "$downloaded_zip" ]; then
             baserom="$downloaded_zip"
         else
-            error "Download error: No zip file was downloaded!"
+            error "Download error: Không tìm thấy file zip!"
             exit 1
         fi
     fi
-    info "BASEROM downloaded: ${baserom}"
+
+    info "BASEROM: ${baserom}"
 
 elif [ -f "${baserom}" ]; then
-    info "BASEROM local file: ${baserom}"
+    info "BASEROM: ${baserom}"
 else
     error "BASEROM: Invalid parameter"
     exit 1
 fi
+
 
 
 # ==================== Nhận diện thông tin ROM ====================
