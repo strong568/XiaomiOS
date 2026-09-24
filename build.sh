@@ -22,7 +22,8 @@ else
     status="Official"
 fi
 
-# Cài đặt phụ thuộc cần thiết (đã bỏ libsparse-tools để tránh lỗi apt trên Ubuntu 24.04)
+# Gỡ bỏ sạch sẽ các tàn dư PHP gây kẹt dpkg
+sudo apt-get remove -y --purge php* 2>/dev/null || true
 sudo dpkg --configure -a 2>/dev/null || true
 sudo apt-get update -y
 sudo apt-get install -y xmlstarlet aapt zipalign p7zip-full libc++1 libc++abi1
