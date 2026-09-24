@@ -23,7 +23,13 @@ fi
 # Fix lỗi cấu hình gói apt/dpkg và cài đặt các phụ thuộc cần thiết
 sudo dpkg --configure -a 2>/dev/null || true
 sudo apt-get update -y
-sudo apt-get install -y xmlstarlet aapt libc++1 libc++abi1 libsparse-tools
+#sudo apt-get install -y xmlstarlet aapt libc++1 libc++abi1 libsparse-tools
+
+sudo apt-get install -y xmlstarlet aapt zipalign p7zip-full libc++1 libc++abi1
+
+#sudo apt-get install -y xmlstarlet aapt zipalign libc++1 libc++abi1
+
+#sudo apt-get install -y xmlstarlet aapt libc++1 libc++abi1
 
 check unzip aria2c 7z zip java zipalign python3 zstd bc xmlstarlet aapt
 
@@ -152,7 +158,12 @@ for part in ${super_list}; do
 done
 
 # Trích xuất Framework Gốc (Stock) ngay sau khi bung partition
-bash "$work_dir/frameworkExtract.sh" stock "$baserom"
+#bash "$work_dir/frameworkExtract.sh" stock "$baserom"
+
+if [ -f "$work_dir/frameworkExtract.sh" ]; then
+    chmod +x "$work_dir/frameworkExtract.sh"
+    bash "$work_dir/frameworkExtract.sh" stock "$baserom" || echo "[WARNING] Không thể trích xuất stock framework"
+fi
 
 # ==================== FIX TÊN CODENAME THIẾT BỊ ====================
 detected_codename=""

@@ -89,8 +89,9 @@ exists() {
 
 abort() {
     yellow "--> Missing $1 ! installing..."
-    apt install $1 -y
+    sudo apt install -y "$1"
 }
+
 
 check() {
     for b in "$@"; do
