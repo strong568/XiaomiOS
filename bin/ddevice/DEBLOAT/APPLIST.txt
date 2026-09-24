@@ -65,13 +65,16 @@ VoiceTrigger
 VoiceAssist
 YouDaoEngine
 aiasst_service
-XiaoaiRecommendation
 BaiduIME
 DownloadProviderUi
 MIGalleryLockscreen
 MIService
 MIpay
 XiaoaiEdgeEngine
+XiaoaiRecommendation
+XiaomiEUExt
+XiaomiEUInject
+XiaomiEUInject-Stub
 MIGalleryLockscreen-MIUI15
 MIUIGameCenter
 MIUIEmail
