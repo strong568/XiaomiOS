@@ -172,9 +172,15 @@ if [[ -z "$detected_codename" || "$detected_codename" == "miproduct" ]]; then
     device_subcode=$(echo "$target_code" | grep -o -E '[A-Z]{7}' | cut -c 2-3)
 
     case "$device_subcode" in
+        "PM") detected_codename="myron" ;;
+        "PL") detected_codename="dash" ;;
+        "PK") detected_codename="annibale" ;;
         "PC") detected_codename="pudding" ;;
         "PB") detected_codename="popsicle" ;;
-        "PA") detected_codename="nezha" ;;   
+        "PA") detected_codename="nezha" ;; 
+        "OM") detected_codename="miro" ;;
+        "OL") detected_codename="onyx" ;;  
+        "OK") detected_codename="zorn" ;;
         "OC") detected_codename="dada" ;;
         "OB") detected_codename="haotian" ;;
         "OA") detected_codename="xuanyuan" ;;   
@@ -185,6 +191,7 @@ if [[ -z "$detected_codename" || "$detected_codename" == "miproduct" ]]; then
         "RO") detected_codename="duchamp" ;;
         "ML") detected_codename="corot" ;;
         "NN") detected_codename="manet" ;;
+        "NK") detected_codename="vermeer" ;;
         "NC") detected_codename="houji" ;;
         "NB") detected_codename="shennong" ;;
         "NA") detected_codename="aurora" ;;
@@ -192,6 +199,8 @@ if [[ -z "$detected_codename" || "$detected_codename" == "miproduct" ]]; then
         "MC") detected_codename="fuxi" ;;
         "MB") detected_codename="nuwa" ;;
         "MA") detected_codename="ishtar" ;;
+        "LC") detected_codename="cupid" ;;
+        "LD") detected_codename="psyche" ;;
     esac
 fi
 
