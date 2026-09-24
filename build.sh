@@ -163,25 +163,64 @@ fi
 # ==================== FIX TÊN CODENAME THIẾT BỊ ====================
 detected_codename=""
 
-# Ưu tiên 1: Lấy từ product/etc/build.prop hoặc vendor (chứa codename máy thật, tránh chữ missi của system)
-if [ -f "$work_dir/build/baserom/images/product/etc/build.prop" ]; then
-    detected_codename=$(grep -m1 "^ro.product.product.device=" "$work_dir/build/baserom/images/product/etc/build.prop" | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
-elif [ -f "$work_dir/build/baserom/images/vendor/build.prop" ]; then
-    detected_codename=$(grep -m1 "^ro.product.vendor.device=" "$work_dir/build/baserom/images/vendor/build.prop" | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
+# 1. Quét codename trực tiếp từ tên file zip / URL baserom
+detected_codename=$(echo "$baserom" | grep -o -i -E "(peridot|onyx|garnet|corot|duchamp|manet|houji|shennong|munch|fuxi|nuwa|ishtar|vermeer|dada|pipa|liuqin|yudy)" | head -n 1 | tr '[:upper:]' '[:lower:]')
+
+# 2. Nếu không thấy từ URL, đọc mã 2 chữ cái đặc trưng từ base_rom_code (VD: UNPCNXM -> NP -> peridot)
+if [[ -z "$detected_codename" || "$detected_codename" == "miproduct" ]]; then
+    target_code=$(cat "$work_dir/bin/ddevice/base_rom_code.txt" 2>/dev/null || echo "$baserom")
+    device_subcode=$(echo "$target_code" | grep -o -E '[A-Z]{7}' | cut -c 2-3)
+
+    case "$device_subcode" in
+        "PC") detected_codename="pudding" ;;
+        "PB") detected_codename="popsicle" ;;
+        "PA") detected_codename="nezha" ;;   
+        "OC") detected_codename="dada" ;;
+        "OB") detected_codename="haotian" ;;
+        "OA") detected_codename="xuanyuan" ;;   
+        "NP") detected_codename="peridot" ;;
+        "LM") detected_codename="munch" ;;
+        "KO") detected_codename="lisa" ;;
+        "NR") detected_codename="garnet" ;;
+        "RO") detected_codename="duchamp" ;;
+        "ML") detected_codename="corot" ;;
+        "NN") detected_codename="manet" ;;
+        "NC") detected_codename="houji" ;;
+        "NB") detected_codename="shennong" ;;
+        "NA") detected_codename="aurora" ;;
+        "MR") detected_codename="marble" ;;
+        "MC") detected_codename="fuxi" ;;
+        "MB") detected_codename="nuwa" ;;
+        "MA") detected_codename="ishtar" ;;
+    esac
 fi
 
-# Ưu tiên 2: Nếu lấy ra missi hoặc rỗng thì bóc thẳng từ chuỗi baserom/tên file zip
-if [[ -z "$detected_codename" || "$detected_codename" == "missi" ]]; then
-    detected_codename=$(echo "$baserom" | grep -o -i -E "(peridot|onyx|garnet|corot|duchamp|manet|houji|shennong)" | head -n 1 | tr '[:upper:]' '[:lower:]')
+# 3. Đọc từ vendor/odm build.prop (tránh xa system và product build.prop vì chứa missi/miproduct)
+if [[ -z "$detected_codename" || "$detected_codename" == "miproduct" ]]; then
+    if [ -f "$work_dir/build/baserom/images/vendor/build.prop" ]; then
+        prop_dev=$(grep -m1 "^ro.product.vendor.device=" "$work_dir/build/baserom/images/vendor/build.prop" | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
+        [[ "$prop_dev" != "miproduct" && "$prop_dev" != "generic" && "$prop_dev" != "missi" ]] && detected_codename="$prop_dev"
+    fi
 fi
 
-if [ -n "$detected_codename" ]; then
-    device_f="$detected_codename"
+if [[ -z "$detected_codename" || "$detected_codename" == "miproduct" ]]; then
+    if [ -f "$work_dir/build/baserom/images/odm/etc/build.prop" ]; then
+        prop_dev=$(grep -m1 "^ro.product.odm.device=" "$work_dir/build/baserom/images/odm/etc/build.prop" | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
+        [[ "$prop_dev" != "miproduct" && "$prop_dev" != "generic" && "$prop_dev" != "missi" ]] && detected_codename="$prop_dev"
+    fi
 fi
 
-echo "$device_f" > $work_dir/bin/ddevice/device_f.txt
-getvar=$(cat $work_dir/bin/ddevice/device_f.txt)
+# Fallback an toàn nếu vẫn rỗng hoặc ra miproduct
+if [[ -z "$detected_codename" || "$detected_codename" == "miproduct" || "$detected_codename" == "missi" ]]; then
+    detected_codename="xiaomi"
+fi
+
+device_f="$detected_codename"
+echo "$device_f" > "$work_dir/bin/ddevice/device_f.txt"
+echo "$device_f" > "$work_dir/bin/ddevice/device_code.txt"
+getvar="$device_f"
 # ===================================================================
+
 
 
 rm -rf config
