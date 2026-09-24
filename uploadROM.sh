@@ -150,7 +150,9 @@ fi
 # ========================================================
 upload "Đang chuẩn bị tải lên Hugging Face..."
 
-pip install -q --no-cache-dir huggingface_hub
+#pip install -q --no-cache-dir huggingface_hub
+
+python3 -m pip install --break-system-packages --ignore-installed huggingface_hub
 
 HF_REPO_ID="Strong568/XiaomiOS-ROM"
 HF_REPO_TYPE="model"
