@@ -1,0 +1,109 @@
+name: Extract Framework (Artifacts & Release)
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_url:
+        description: 'Link tải ROM (Direct link/OTA zip)'
+        required: true
+      builder_name:
+        description: 'Tên người thực hiện'
+        required: false
+        default: 'Admin'
+      builder_id:
+        description: 'ID người thực hiện'
+        required: false
+        default: '0'
+
+jobs:
+  Extract-Framework:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Cấp quyền tạo Release và upload tệp
+
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          swap-size-mb: 1024
+          root-reserve-mb: 512
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+
+      - name: Clean All Unused file, application
+        run: |
+          docker rmi `docker images -q` || true
+          sudo apt-get -y purge azure-cli ghc* zulu* hhvm llvm* firefox google* dotnet* powershell mysql* php* || true
+          sudo apt-get -y autoremove --purge || true
+          sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php || true
+          sudo apt-get -y autoclean || true
+          sudo apt-get clean || true
+
+      - name: Checkout repository
+        uses: actions/checkout@main
+
+      - name: Set up Timezone
+        run: |
+          sudo timedatectl set-timezone Asia/Ho_Chi_Minh
+
+      - name: Install OpenJDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Dependencies
+        run: |
+          sudo bash setup.sh
+          sudo chmod 777 -R *
+
+      - name: Build ROM & Unpack
+        env:
+          INPUT_URL: ${{ inputs.input_url }}
+        run: |
+          sudo -E bash build.sh "$INPUT_URL" "${{ github.repository }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
+
+      - name: Extract Modded Framework
+        run: |
+          sudo chmod +x frameworkExtract.sh
+          sudo -E bash frameworkExtract.sh mod "${{ inputs.input_url }}"
+
+      # ================= 1. XUẤT RA ARTIFACTS =================
+      - name: Upload Stock Framework to Artifacts
+        uses: actions/upload-artifact@v4
+        if: env.DUMP_STOCK_PATH != ''
+        with:
+          name: ${{ env.DUMP_STOCK_NAME }}
+          path: ${{ env.DUMP_STOCK_PATH }}
+          retention-days: 7
+
+      - name: Upload Modded Framework to Artifacts
+        uses: actions/upload-artifact@v4
+        if: env.DUMP_MOD_PATH != ''
+        with:
+          name: ${{ env.DUMP_MOD_NAME }}
+          path: ${{ env.DUMP_MOD_PATH }}
+          retention-days: 7
+
+      # ================= 2. XUẤT RA GITHUB RELEASE =================
+      - name: Prepare Release Info
+        id: release_info
+        run: |
+          TAG_NAME="Framework_$(date +'%Y%m%d_%H%M%S')"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_info.outputs.tag_name }}
+          name: "Framework Dump: ${{ steps.release_info.outputs.tag_name }}"
+          body: |
+            ### Trích xuất Framework tự động
+            - **URL nguồn:** `${{ inputs.input_url }}`
+            - **Người thực hiện:** `${{ inputs.builder_name }}`
+            - **Thời gian:** $(date +'%Y-%m-%d %H:%M:%S')
+          files: |
+            ${{ env.DUMP_STOCK_PATH }}${{ env.DUMP_MOD_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
