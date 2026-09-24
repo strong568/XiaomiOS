@@ -59,8 +59,14 @@ if [ "$(echo "$baserom" | grep 'miui_')" != "" ]; then
     device_code=$(basename "$baserom" | cut -d '_' -f 2)
     base_rom_code=$(echo "$baserom" | awk -F'_' '{print $3}')
 elif [ "$(echo "$baserom" | grep 'xiaomi.eu_')" != "" ]; then
-    device_code=$(basename "$baserom" | cut -d '_' -f 3)
-    base_rom_code=$(echo "$baserom" | awk -F'_' '{print $4}')
+    device_code=$(basename "$baserom" | cut -d '_' -f 2)
+    # Nếu vị trí 2 là chữ MUNCH, POCO... thì lấy chuỗi OS/V ở vị trí 3 hoặc lọc Regex
+    base_rom_code=$(echo "$baserom" | grep -o -E '(OS[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.[A-Z]+|V[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.[A-Z]+)')
+    if [ -z "$base_rom_code" ]; then
+        base_rom_code=$(basename "$baserom" | cut -d '_' -f 3)
+    fi
+
+
     # Dự phòng nếu vị trí gạch dưới khác format
     if [[ "$base_rom_code" != OS* && "$base_rom_code" != V* ]]; then
         base_rom_code=$(echo "$baserom" | grep -o -E '(OS[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.[A-Z]+|V[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.[A-Z]+)')
