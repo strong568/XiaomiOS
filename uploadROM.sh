@@ -113,44 +113,102 @@ repack "Output: $output_file"
 mkdir -p "$work_dir/bin/ddevice"
 echo "$final_zip_name" > "$work_dir/bin/ddevice/output_zip.txt"
 
+# Reset file URL
+> "$work_dir/bin/ddevice/output_url.txt"
+
 # ========================================================
-# Tải lên Pixeldrain
+# 1. Tải lên Pixeldrain
 # ========================================================
 upload "Đang kết nối API Pixeldrain..."
 
 if [ -z "${PIXELDRAIN_API_KEY:-}" ]; then
-    upload "CANH BAO: Khong tim thay PIXELDRAIN_API_KEY, upload an danh (anonymous)..."
+    upload "CẢNH BÁO: Không tìm thấy PIXELDRAIN_API_KEY, upload ẩn danh..."
     AUTH_HEADER=""
 else
     AUTH_HEADER="-u :${PIXELDRAIN_API_KEY}"
 fi
 
+PIXELDRAIN_LINK=""
 if [ ! -f "$output_file" ]; then
-    upload "LOI: Khong tim thay file output: $output_file"
-    echo "" > "$work_dir/bin/ddevice/output_url.txt"
+    upload "LỖI: Không tìm thấy file output: $output_file"
 else
     upload "Bắt đầu tải file $final_zip_name lên Pixeldrain..."
-    
     UPLOAD_RESPONSE=$(curl -s -# -T "$output_file" $AUTH_HEADER "https://pixeldrain.com/api/file/$final_zip_name")
     PIXELDRAIN_ID=$(echo "$UPLOAD_RESPONSE" | grep -oP '"id":"\K[^"]+' | head -n 1)
 
     if [ -n "$PIXELDRAIN_ID" ] && [ "$PIXELDRAIN_ID" != "null" ]; then
         PIXELDRAIN_LINK="https://pixeldrain.com/u/$PIXELDRAIN_ID"
-        upload "Tải lên Pixeldrain thành công! Link: $PIXELDRAIN_LINK"
-        echo "$PIXELDRAIN_LINK" > "$work_dir/bin/ddevice/output_url.txt"
+        upload "Tải lên Pixeldrain thành công!"
+        echo "Pixeldrain: $PIXELDRAIN_LINK" >> "$work_dir/bin/ddevice/output_url.txt"
     else
-        upload "Lỗi khi upload lên Pixeldrain. Phản hồi: $UPLOAD_RESPONSE"
-        echo "" > "$work_dir/bin/ddevice/output_url.txt"
+        upload "Lỗi khi upload lên Pixeldrain: $UPLOAD_RESPONSE"
     fi
 fi
 
 # ========================================================
-# Dọn dẹp môi trường (Giữ thư mục out/ cho Artifact/Release)
+# 2. Tải lên Hugging Face (Strong568/XiaomiOS-ROM)
+# ========================================================
+upload "Đang chuẩn bị tải lên Hugging Face..."
+
+pip install -q --no-cache-dir huggingface_hub
+
+HF_REPO_ID="Strong568/XiaomiOS-ROM"
+HF_REPO_TYPE="model"
+HF_DIRECT_URL="https://huggingface.co/${HF_REPO_ID}/resolve/main/releases/${final_zip_name}"
+HF_LINK=""
+
+if [ -z "${HF_TOKEN:-}" ]; then
+    upload "CẢNH BÁO: Không tìm thấy biến môi trường HF_TOKEN, bỏ qua bước upload Hugging Face."
+else
+    if [ ! -f "$output_file" ]; then
+        upload "LỖI: Không tìm thấy file output: $output_file"
+    else
+        upload "Bắt đầu tải file $final_zip_name lên Hugging Face ($HF_REPO_ID)..."
+
+        python3 - <<EOF
+import os
+import sys
+from huggingface_hub import HfApi
+
+hf_token = os.environ.get("HF_TOKEN")
+file_path = "$output_file"
+file_name = "$final_zip_name"
+repo_id = "$HF_REPO_ID"
+repo_type = "$HF_REPO_TYPE"
+
+api = HfApi(token=hf_token)
+
+try:
+    api.upload_file(
+        path_or_fileobj=file_path,
+        path_in_repo=f"releases/{file_name}",
+        repo_id=repo_id,
+        repo_type=repo_type,
+    )
+    print("\n[UPLOAD SUCCESS] File đã tải lên Hugging Face thành công!")
+except Exception as e:
+    print(f"\n[UPLOAD ERROR] Hugging Face thất bại: {e}", file=sys.stderr)
+    sys.exit(1)
+EOF
+
+        if [ $? -eq 0 ]; then
+            HF_LINK="$HF_DIRECT_URL"
+            upload "Tải lên Hugging Face thành công!"
+            echo "HuggingFace: $HF_LINK" >> "$work_dir/bin/ddevice/output_url.txt"
+        else
+            upload "Upload Hugging Face thất bại!"
+        fi
+    fi
+fi
+
+# ========================================================
+# Dọn dẹp môi trường & Hiển thị liên kết
 # ========================================================
 upload "Cleaning build temporary files..."
 rm -rf "$work_dir/build"
 
-upload "Build ${os_type} for ${device_lower} successful!"
-if [ -n "${PIXELDRAIN_LINK:-}" ]; then
-    upload "Download: $PIXELDRAIN_LINK"
-fi
+upload "=============================================="
+upload "Build ${os_type} for ${device_lower} hoàn tất!"
+[ -n "$PIXELDRAIN_LINK" ] && upload "Pixeldrain : $PIXELDRAIN_LINK"
+[ -n "$HF_LINK" ]          && upload "Hugging Face: $HF_LINK"
+upload "=============================================="
