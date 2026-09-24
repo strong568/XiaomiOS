@@ -10,22 +10,34 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
 
     USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
-    # Xử lý đặc thù cho SourceForge để không bị chặn mã 403
+    # Xử lý đặc thù cho SourceForge để không bị chặn mã 403 và không bị tải nhầm trang HTML
     if [[ "$baserom" == *"sourceforge.net"* ]]; then
         [[ "$baserom" != *"/download" ]] && baserom="${baserom}/download"
         
         info "SourceForge direct file detected, resolving redirect mirror..."
+        
+        # Bóc tách tên file dự kiến từ URL
+        expected_filename=$(echo "$baserom" | grep -oP 'files/[^/]+/(?:[^/]+/)*\K[^/]+(?=/download)')
+        if [ -z "$expected_filename" ]; then
+            expected_filename=$(basename "${baserom%/download}")
+        fi
+
+        # Tìm URL mirror trực tiếp qua header Location
         DIRECT_URL=$(curl -sIL -A "$USER_AGENT" -e "https://sourceforge.net/" "$baserom" | grep -i "^location:" | tail -n 1 | awk '{print $2}' | tr -d '\r\n')
         
-        if [ -n "$DIRECT_URL" ]; then
-            baserom="$DIRECT_URL"
+        if [[ -n "$DIRECT_URL" && "$DIRECT_URL" =~ ^https?:// ]]; then
+            info "Downloading from resolved mirror: $DIRECT_URL"
+            aria2c --header="User-Agent: $USER_AGENT" \
+                   --header="Referer: https://sourceforge.net/" \
+                   --check-certificate=false \
+                   --allow-overwrite=true \
+                   -x16 -s16 -j16 \
+                   -o "$expected_filename" \
+                   "$DIRECT_URL" || curl -L -k -A "$USER_AGENT" -e "https://sourceforge.net/" -o "$expected_filename" "$DIRECT_URL"
+        else
+            info "Fallback: Direct stream with curl..."
+            curl -L -k -A "$USER_AGENT" -e "https://sourceforge.net/" -o "$expected_filename" "$baserom"
         fi
-        
-        # Tải bằng curl -L với đầy đủ Referer
-        curl -L -k -A "$USER_AGENT" -e "https://sourceforge.net/" -O -J "$baserom" || {
-            aria2c --header="User-Agent: $USER_AGENT" --header="Referer: https://sourceforge.net/" \
-                   --check-certificate=false --allow-overwrite=true -x16 -s16 "${baserom}"
-        }
     else
         # Link tải trực tiếp bình thường (Aliyun, direct host...)
         aria2c --max-download-limit=1024M \
@@ -39,8 +51,8 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
                "${baserom}"
     fi
 
-    # Lấy file zip vừa tải về trong thư mục
-    downloaded_zip=$(ls -t *.zip 2>/dev/null | head -n 1)
+    # Ưu tiên lấy file zip có dung lượng lớn nhất vừa tải về
+    downloaded_zip=$(ls -S *.zip 2>/dev/null | head -n 1)
 
     if [ -n "$downloaded_zip" ] && [ -f "$downloaded_zip" ]; then
         baserom="$downloaded_zip"
