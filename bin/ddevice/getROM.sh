@@ -57,6 +57,7 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
         MIRRORS=(
             "https://master.dl.sourceforge.net/project/${project_name}/${file_subpath}"
             "https://versaweb.dl.sourceforge.net/project/${project_name}/${file_subpath}"
+            "https://ixpeering.dl.sourceforge.net/project/${project_name}/${file_subpath}"
             "https://twds.dl.sourceforge.net/project/${project_name}/${file_subpath}"
             "https://downloads.sourceforge.net/project/${project_name}/${file_subpath}"
         )
