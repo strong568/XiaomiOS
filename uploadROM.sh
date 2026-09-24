@@ -10,7 +10,6 @@ export PATH="${tools_dir}:$PATH"
 if [ -f "$work_dir/functions.sh" ]; then
     source "$work_dir/functions.sh"
 else
-    # Fallback log function nếu functions.sh không tồn tại
     repack() { echo "[REPACK] - $*"; }
     upload() { echo "[UPLOAD] - $*"; }
 fi
@@ -25,12 +24,12 @@ rom_os=$(cat "$work_dir/bin/ddevice/rom_os.txt" 2>/dev/null || echo "")
 regionTYPE=$(cat "$work_dir/bin/ddevice/device_type.txt" 2>/dev/null || echo "")
 baserom_type=$(cat "$work_dir/bin/ddevice/romtype.txt" 2>/dev/null || echo "")
 
-# Ưu tiên lấy Codename chuẩn
+# Ưu tiên lấy Codename chuẩn viết thường (peridot)
 device_f=$(cat "$work_dir/bin/ddevice/device_f.txt" 2>/dev/null || echo "")
-if [[ -z "$device_f" || "$device_f" == "missing" ]]; then
-    device_f=$(cat "$work_dir/bin/ddevice/device_code.txt" 2>/dev/null || echo "generic")
+if [[ -z "$device_f" || "$device_f" == "missing" || "$device_f" == "miproduct" ]]; then
+    device_f=$(cat "$work_dir/bin/ddevice/device_code.txt" 2>/dev/null || echo "peridot")
 fi
-device_code="$device_f"
+device_lower=$(echo "$device_f" | tr '[:upper:]' '[:lower:]')
 
 if [[ -f "$work_dir/Version" ]]; then
     polyxver="$(cat "$work_dir/Version")"
@@ -38,9 +37,6 @@ else
     polyxver="1.0"
 fi
 
-# ========================================================
-# Nhận diện OS Type
-# ========================================================
 if [[ "$base_rom_code" == OS* ]]; then
     true_os="HyperOS"
 else
@@ -48,7 +44,7 @@ else
 fi
 os_type="${os_type:-$true_os}"
 
-target_out_dir="$work_dir/out/${os_type}_${device_f}_${base_rom_code}"
+target_out_dir="$work_dir/out/${os_type}_${device_lower}_${base_rom_code}"
 mkdir -p "$target_out_dir/images/"
 
 # ========================================================
@@ -85,46 +81,30 @@ cp -rf "$work_dir/bin/script2flash/"*.sh "$target_out_dir/" 2>/dev/null || true
 cp -rf "$work_dir/bin/script2flash/cust.img" "$target_out_dir/images/" 2>/dev/null || true
 
 mkdir -p "$target_out_dir/META-INF/Data"
-echo "$device_f" > "$target_out_dir/META-INF/Data/DeviceCode"
+echo "$device_lower" > "$target_out_dir/META-INF/Data/DeviceCode"
 repack "Done"
 
 # ========================================================
-# Đóng gói ZIP
+# Chuẩn hóa tên file xuất xưởng & Đóng gói ZIP
 # ========================================================
 find "$target_out_dir" -exec touch {} + 2>/dev/null || true
 
-zip_base_name="${os_type}_${device_f}_${base_rom_code}.zip"
-pushd "$target_out_dir" > /dev/null || exit 1
-zip -r "../${zip_base_name}" ./*
-popd > /dev/null || exit 1
-
-# Chuẩn hóa tên file xuất xưởng
-# 1. Lấy ngày tháng năm hiện tại (YYYYMMDD)
 current_date=$(date +"%Y%m%d")
-
-# 2. Giữ nguyên codename chữ thường (ví dụ: peridot)
-device_lower=$(echo "$device_f" | tr '[:upper:]' '[:lower:]')
-
-# 3. Giữ nguyên toàn bộ mã ROM gốc (không cắt chữ OS)
 rom_code="$base_rom_code"
 
-# 4. Kiểm tra xem ROM gốc đầu vào có phải là xiaomi.eu hay không
-# Kiểm tra qua URL baserom hoặc cờ is_base_rom_eu
-if [[ "$baserom" == *"xiaomi.eu"* || "$is_base_rom_eu" == "true" ]]; then
-    # Xuất định dạng theo chuẩn xiaomi.eu
+# Tự động nhận diện bản ROM xiaomi.eu qua tên URL, cờ biến hoặc file tạm
+if [[ "$baserom" == *"xiaomi.eu"* || "$is_base_rom_eu" == "true" || -f "$work_dir/bin/ddevice/is_eu.txt" ]]; then
     final_zip_name="XiaomiOS_xiaomi.eu_${device_lower}_${rom_code}_mod_${current_date}.zip"
 else
-    # Xuất định dạng chuẩn riêng XiaomiOS
     final_zip_name="XiaomiOS_${device_lower}_${rom_code}_mod_${current_date}.zip"
 fi
 
-# Đổi tên file zip hoàn chỉnh trong thư mục out/
-if [ -f "out/${os_type}_${device_f}_${base_rom_code}.zip" ]; then
-    mv "out/${os_type}_${device_f}_${base_rom_code}.zip" "out/$final_zip_name"
-elif [ -f "out/$(ls -t out/*.zip 2>/dev/null | head -n 1)" ]; then
-    latest_zip=$(ls -t out/*.zip 2>/dev/null | head -n 1)
-    mv "$latest_zip" "out/$final_zip_name"
-fi
+pushd "$target_out_dir" > /dev/null || exit 1
+zip -r "../${final_zip_name}" ./*
+popd > /dev/null || exit 1
+
+# Dọn dẹp thư mục staging, giữ nguyên file ZIP hoàn chỉnh
+rm -rf "$target_out_dir"
 
 output_file="$work_dir/out/$final_zip_name"
 repack "Build completed"
@@ -139,7 +119,7 @@ echo "$final_zip_name" > "$work_dir/bin/ddevice/output_zip.txt"
 upload "Đang kết nối API Pixeldrain..."
 
 if [ -z "${PIXELDRAIN_API_KEY:-}" ]; then
-    upload "CANH BAO: Bien PIXELDRAIN_API_KEY chua duoc set, tien hanh upload an danh (anonymous)..."
+    upload "CANH BAO: Khong tim thay PIXELDRAIN_API_KEY, upload an danh (anonymous)..."
     AUTH_HEADER=""
 else
     AUTH_HEADER="-u :${PIXELDRAIN_API_KEY}"
@@ -151,10 +131,7 @@ if [ ! -f "$output_file" ]; then
 else
     upload "Bắt đầu tải file $final_zip_name lên Pixeldrain..."
     
-    # Upload qua API Pixeldrain (PUT request)
     UPLOAD_RESPONSE=$(curl -s -# -T "$output_file" $AUTH_HEADER "https://pixeldrain.com/api/file/$final_zip_name")
-    
-    # Bóc tách ID file từ JSON response
     PIXELDRAIN_ID=$(echo "$UPLOAD_RESPONSE" | grep -oP '"id":"\K[^"]+' | head -n 1)
 
     if [ -n "$PIXELDRAIN_ID" ] && [ "$PIXELDRAIN_ID" != "null" ]; then
@@ -168,13 +145,12 @@ else
 fi
 
 # ========================================================
-# Dọn dẹp thư mục tạm
+# Dọn dẹp môi trường (Giữ thư mục out/ cho Artifact/Release)
 # ========================================================
-upload "Clean Workflow.."
-rm -rf "$work_dir/out"
+upload "Cleaning build temporary files..."
 rm -rf "$work_dir/build"
 
-upload "Build ${os_type}_${polyxver} for ${device_f} successful!"
+upload "Build ${os_type} for ${device_lower} successful!"
 if [ -n "${PIXELDRAIN_LINK:-}" ]; then
     upload "Download: $PIXELDRAIN_LINK"
 fi

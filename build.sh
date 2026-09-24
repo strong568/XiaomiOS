@@ -71,6 +71,8 @@ elif unzip -l "${baserom}" | grep -q "super.img.*"; then
     unpack "Found super.img.* files"
     is_base_rom_eu=true
     unpack "ROM validation passed."
+    echo "true" > "$work_dir/bin/ddevice/is_eu.txt"
+        
 else
     error "Unpack failed"
     exit 1
