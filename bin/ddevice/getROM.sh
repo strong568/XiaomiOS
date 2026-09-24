@@ -8,34 +8,41 @@ source $work_dir/functions.sh
 if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" ]; then
     info "Download link detected, starting a download..."
 
-    # Tự động fix link SourceForge nếu thiếu /download
-    if [[ "$baserom" == *"sourceforge.net/projects/"* && "$baserom" == *"/files/"* && "$baserom" != *"/download" ]]; then
-        info "SourceForge direct file detected, appending /download..."
-        baserom="${baserom}/download"
-    fi
-
     USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
-    # Tải bằng aria2c với đầy đủ cờ điều hướng và headers
-    aria2c --max-download-limit=1024M \
-           --file-allocation=none \
-           --check-certificate=false \
-           --allow-overwrite=true \
-           --auto-file-renaming=false \
-           -s16 -x16 -j16 \
-           --content-disposition \
-           -U "$USER_AGENT" \
-           "${baserom}"
+    # Xử lý đặc thù cho SourceForge để không bị chặn mã 403
+    if [[ "$baserom" == *"sourceforge.net"* ]]; then
+        [[ "$baserom" != *"/download" ]] && baserom="${baserom}/download"
+        
+        info "SourceForge direct file detected, resolving redirect mirror..."
+        DIRECT_URL=$(curl -sIL -A "$USER_AGENT" -e "https://sourceforge.net/" "$baserom" | grep -i "^location:" | tail -n 1 | awk '{print $2}' | tr -d '\r\n')
+        
+        if [ -n "$DIRECT_URL" ]; then
+            baserom="$DIRECT_URL"
+        fi
+        
+        # Tải bằng curl -L với đầy đủ Referer
+        curl -L -k -A "$USER_AGENT" -e "https://sourceforge.net/" -O -J "$baserom" || {
+            aria2c --header="User-Agent: $USER_AGENT" --header="Referer: https://sourceforge.net/" \
+                   --check-certificate=false --allow-overwrite=true -x16 -s16 "${baserom}"
+        }
+    else
+        # Link tải trực tiếp bình thường (Aliyun, direct host...)
+        aria2c --max-download-limit=1024M \
+               --file-allocation=none \
+               --check-certificate=false \
+               --allow-overwrite=true \
+               --auto-file-renaming=false \
+               -s16 -x16 -j16 \
+               --content-disposition \
+               -U "$USER_AGENT" \
+               "${baserom}"
+    fi
 
-    # Bóc tách tên file dự kiến từ URL
-    clean_baserom=$(basename "${baserom%%\?*}" | sed 's/\/download$//')
-
-    # Ưu tiên lấy file zip thực tế vừa tải về trong thư mục
+    # Lấy file zip vừa tải về trong thư mục
     downloaded_zip=$(ls -t *.zip 2>/dev/null | head -n 1)
 
-    if [ -f "$work_dir/$clean_baserom" ]; then
-        baserom="$clean_baserom"
-    elif [ -n "$downloaded_zip" ] && [ -f "$downloaded_zip" ]; then
+    if [ -n "$downloaded_zip" ] && [ -f "$downloaded_zip" ]; then
         baserom="$downloaded_zip"
     elif [ -f "$work_dir/topaz-ota_full-OS3.0.2.0.WMGCNXM-user-16.0-b487e82659.zip" ]; then
         baserom="topaz-ota_full-OS3.0.2.0.WMGCNXM-user-16.0-b487e82659.zip"
@@ -60,16 +67,9 @@ if [ "$(echo "$baserom" | grep 'miui_')" != "" ]; then
     base_rom_code=$(echo "$baserom" | awk -F'_' '{print $3}')
 elif [ "$(echo "$baserom" | grep 'xiaomi.eu_')" != "" ]; then
     device_code=$(basename "$baserom" | cut -d '_' -f 2)
-    # Nếu vị trí 2 là chữ MUNCH, POCO... thì lấy chuỗi OS/V ở vị trí 3 hoặc lọc Regex
     base_rom_code=$(echo "$baserom" | grep -o -E '(OS[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.[A-Z]+|V[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.[A-Z]+)')
     if [ -z "$base_rom_code" ]; then
         base_rom_code=$(basename "$baserom" | cut -d '_' -f 3)
-    fi
-
-
-    # Dự phòng nếu vị trí gạch dưới khác format
-    if [[ "$base_rom_code" != OS* && "$base_rom_code" != V* ]]; then
-        base_rom_code=$(echo "$baserom" | grep -o -E '(OS[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.[A-Z]+|V[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.[A-Z]+)')
     fi
 elif [ "$(echo "$baserom" | grep -E '.*-ota_full-.*')" != "" ]; then
     device_code=$(basename "$baserom" | cut -d '-' -f 1)
@@ -126,7 +126,6 @@ elif echo "$base_rom_code" | grep -q "V14"; then
 elif echo "$base_rom_code" | grep -q "V13"; then
     ROM_OS="MIUI"
 else
-    # Dự phòng nếu là xiaomi.eu hoặc format đặc biệt
     if echo "$baserom" | grep -q "OS1"; then
         ROM_OS="OS1"
     elif echo "$baserom" | grep -q "OS2"; then
