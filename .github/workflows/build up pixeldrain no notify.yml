@@ -1,0 +1,122 @@
+name: PenguinOS Xiaomi ROM Build no notify
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_url:
+        description: 'URL of the ROM to build'
+        required: true
+      builder_name:
+        description: 'Tên người build'
+        required: false
+      builder_id:
+        description: 'ID người build'
+        required: false
+      
+jobs:
+  Initialize:
+    runs-on: ubuntu-latest
+    env:
+      PIXELDRAIN_API_KEY: ${{ secrets.PIXELDRAIN_API_KEY }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      GOFILE_TOKEN: ${{ secrets.GOFILE_TOKEN }}
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          swap-size-mb: 1024
+          root-reserve-mb: 512
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+
+      - name: Clean All Unused file,application
+        run: |
+          docker rmi `docker images -q` || true
+          sudo apt-get -y purge azure-cli ghc* zulu* hhvm llvm* firefox google* dotnet* powershell mysql* php* || true
+          sudo apt-get -y autoremove --purge || true
+          sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php || true
+          sudo apt-get -y autoclean || true
+          sudo apt-get clean || true
+
+      - name: Checkout repository
+        uses: actions/checkout@main
+
+      - name: Set up Time
+        run: |
+          echo "Setting Vienam timezone"
+          sudo timedatectl set-timezone Asia/Ho_Chi_Minh
+          
+      - name: Install OpenJDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Stuff
+        run: |
+          sudo bash setup.sh
+        
+      - name: Giving permission
+        run: |
+          sudo chmod 777 -R *
+          
+      - name: Build ROM...
+        env:
+          INPUT_URL: ${{ inputs.input_url }}
+        run: |
+          sudo -E bash build.sh "$INPUT_URL" "${{ github.repository }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
+
+      # ================= TRÍCH XUẤT SAU KHI MOD =================
+      - name: Extract Modded Framework Files...
+        run: |
+          sudo -E bash frameworkExtract.sh mod "${{ inputs.input_url }}"
+
+      # ================= UPLOAD 2 FILE ZIP LÊN ARTIFACTS =================
+      - name: Upload Stock Framework Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DUMP_STOCK_NAME }}
+          path: ${{ env.DUMP_STOCK_PATH }}
+          retention-days: 7
+
+      - name: Upload Modded Framework Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DUMP_MOD_NAME }}
+          path: ${{ env.DUMP_MOD_PATH }}
+          retention-days: 7
+      # ===================================================================
+
+      - name: Pack ROM...
+        run: |
+          sudo bash packROM.sh
+          
+      - name: Upload ROM and Show Links...
+        env:
+          INPUT_URL: ${{ inputs.input_url }}
+        run: |
+          # Hiện URL đầu vào ngay trên Annotations
+          echo "::notice title=Base ROM Input URL::$INPUT_URL"
+
+          # Chạy script upload
+          sudo -E bash uploadROM.sh
+          
+          # Đọc toàn bộ các link kết quả do uploadROM.sh ghi ra
+          if [ -f "bin/ddevice/output_url.txt" ]; then
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              # Tách title và link để hiện đẹp trên Annotations
+              title_name=$(echo "$line" | cut -d':' -f1 | xargs)
+              link_url=$(echo "$line" | cut -d' ' -f2- | xargs)
+              echo "::notice title=${title_name} Download Link::${link_url}"
+            done < bin/ddevice/output_url.txt
+
+            echo "============================================="
+            echo "URL ĐẦU VÀO: $INPUT_URL"
+            cat bin/ddevice/output_url.txt
+            echo "============================================="
+          fi
+          
+
+
