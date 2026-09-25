@@ -19,7 +19,6 @@ jobs:
     permissions:
       contents: write
     env:
-      # Truyền giá trị giả để notify.py không bị crash nếu thiếu secret Telegram
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || 'disabled' }}
       TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID || '0' }}
       PIXELDRAIN_API_KEY: ${{ secrets.PIXELDRAIN_API_KEY }}
@@ -73,33 +72,39 @@ jobs:
         run: |
           sudo chmod 777 -R *
 
+      # ================= 1. TRÍCH XUẤT STOCK FRAMEWORK =================
+      - name: Extract Stock Framework Files...
+        run: |
+          sudo -E bash frameworkExtract.sh stock "${{ inputs.input_url }}"
+
+      # ================= 2. BUILD VÀ MOD ROM =================
       - name: Build ROM...
         env:
           INPUT_URL: ${{ inputs.input_url }}
         run: |
           sudo -E bash build.sh "$INPUT_URL" "${{ github.repository }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
 
-      # ================= TRÍCH XUẤT SAU KHI MOD =================
+      # ================= 3. TRÍCH XUẤT MODDED FRAMEWORK =================
       - name: Extract Modded Framework Files...
         run: |
           sudo -E bash frameworkExtract.sh mod "${{ inputs.input_url }}"
 
-      # ================= UPLOAD 2 FILE ZIP LÊN ARTIFACTS =================
-      - name: Upload Stock Framework Artifact
+      # ================= 4. GOM FILE VÀ ĐƯA LÊN ARTIFACTS & RELEASE =================
+      - name: Prepare Framework Files
+        run: |
+          mkdir -p framework_out
+          # Thu thập tất cả các file zip Framework Stock và Mod được tạo ra
+          find . -maxdepth 2 -type f -name "Framework_*.zip" -exec cp -f {} framework_out/ \;
+          echo "=== Danh sách file zip Framework ==="
+          ls -lh framework_out/
+
+      - name: Upload Framework Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.DUMP_STOCK_NAME }}
-          path: ${{ env.DUMP_STOCK_PATH }}
+          name: Framework-Files-${{ github.run_id }}
+          path: framework_out/Framework_*.zip
           retention-days: 7
 
-      - name: Upload Modded Framework Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.DUMP_MOD_NAME }}
-          path: ${{ env.DUMP_MOD_PATH }}
-          retention-days: 7
-
-      # ================= UPLOAD 2 FILE ZIP LÊN GITHUB RELEASES (LƯU VĨNH VIỄN) =================
       - name: Release Framework to GitHub Releases
         uses: softprops/action-gh-release@v2
         if: success()
@@ -107,18 +112,18 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: framework-${{ github.run_id }}
-          name: "Framework Dump: ${{ env.DUMP_MOD_NAME }}"
+          name: "Framework Dump: ${{ github.run_id }}"
           body: |
             ### Trích xuất Framework tự động
             - **Run ID**: `${{ github.run_id }}`
-            - **Stock Framework**: `${{ env.DUMP_STOCK_NAME }}`
-            - **Modded Framework**: `${{ env.DUMP_MOD_NAME }}`
+            - Bao gồm cả 2 file: Stock Framework và Modded Framework.
           files: |
-            ${{ env.DUMP_STOCK_PATH }}${{ env.DUMP_MOD_PATH }}
+            framework_out/Framework_STOCK_*.zip
+            framework_out/Framework_MOD_*.zip
           draft: false
           prerelease: false
-      # ===================================================================
 
+      # ================= 5. PACK VÀ UPLOAD ROM HOÀN CHỈNH =================
       - name: Pack ROM...
         run: |
           python notify.py pack "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}" || true
