@@ -207,7 +207,6 @@ EOF
     fi
 fi
 
-
 # ========================================================
 # 3. Tải lên Gofile.io
 # ========================================================
@@ -248,6 +247,43 @@ else
 fi
 
 # ========================================================
+# 4. Tải lên Internet Archive (Archive.org)
+# ========================================================
+upload "Đang chuẩn bị tải lên Archive.org..."
+
+IA_LINK=""
+if [ -z "${IA_ACCESS_KEY:-}" ] || [ -z "${IA_SECRET_KEY:-}" ]; then
+    upload "CẢNH BÁO: Không tìm thấy IA_ACCESS_KEY hoặc IA_SECRET_KEY, bỏ qua upload Archive.org."
+else
+    if [ ! -f "$output_file" ]; then
+        upload "LỖI: Không tìm thấy file output: $output_file"
+    else
+        ITEM_ID="xiaomios-rom"
+        upload "Bắt đầu tải $final_zip_name lên Archive.org (item: $ITEM_ID)..."
+
+        # Sử dụng S3 API với header auto tạo bucket nếu chưa có
+        IA_STATUS=$(curl --write-out "%{http_code}" --silent --output /tmp/ia_response.txt \
+            --location --fail \
+            --header "x-amz-auto-make-bucket:1" \
+            --header "x-archive-meta-mediatype:software" \
+            --header "x-archive-meta-title:XiaomiOS ROM" \
+            --header "x-archive-meta-collection:opensource_software" \
+            --header "authorization: LOW ${IA_ACCESS_KEY}:${IA_SECRET_KEY}" \
+            --upload-file "$output_file" \
+            "https://s3.us.archive.org/${ITEM_ID}/${final_zip_name}")
+
+        if [ "$IA_STATUS" -eq 200 ] || [ "$IA_STATUS" -eq 201 ]; then
+            IA_LINK="https://archive.org/download/${ITEM_ID}/${final_zip_name}"
+            upload "Tải lên Archive.org thành công!"
+            echo "Archive.org: $IA_LINK" >> "$work_dir/bin/ddevice/output_url.txt"
+        else
+            upload "Upload Archive.org thất bại (HTTP $IA_STATUS):"
+            cat /tmp/ia_response.txt 2>/dev/null
+        fi
+    fi
+fi
+
+# ========================================================
 # Dọn dẹp môi trường & Hiển thị liên kết
 # ========================================================
 upload "Cleaning build temporary files..."
@@ -258,5 +294,5 @@ upload "Build ${os_type} for ${device_lower} hoàn tất!"
 [ -n "$PIXELDRAIN_LINK" ] && upload "Pixeldrain : $PIXELDRAIN_LINK"
 [ -n "$HF_LINK" ]          && upload "Hugging Face: $HF_LINK"
 [ -n "$GOFILE_LINK" ]      && upload "Gofile      : $GOFILE_LINK"
+[ -n "$IA_LINK" ]          && upload "Archive.org : $IA_LINK"
 upload "=============================================="
-
