@@ -72,24 +72,20 @@ jobs:
         run: |
           sudo chmod 777 -R *
 
-      # ================= 1. TRÍCH XUẤT STOCK FRAMEWORK =================
-      - name: Extract Stock Framework Files...
-        run: |
-          sudo -E bash frameworkExtract.sh stock "${{ inputs.input_url }}"
-
-      # ================= 2. BUILD VÀ MOD ROM =================
+      # ================= 1. BUILD VÀ MOD ROM =================
+      # Lưu ý: build.sh đã tự tải ROM, bung super/payload và gọi trích xuất Stock Framework tự động
       - name: Build ROM...
         env:
           INPUT_URL: ${{ inputs.input_url }}
         run: |
           sudo -E bash build.sh "$INPUT_URL" "${{ github.repository }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
 
-      # ================= 3. TRÍCH XUẤT MODDED FRAMEWORK =================
+      # ================= 2. TRÍCH XUẤT MODDED FRAMEWORK =================
       - name: Extract Modded Framework Files...
         run: |
           sudo -E bash frameworkExtract.sh mod "${{ inputs.input_url }}"
 
-      # ================= 4. GOM FILE VÀ ĐƯA LÊN ARTIFACTS & RELEASE =================
+      # ================= 3. GOM FILE VÀ ĐƯA LÊN ARTIFACTS & RELEASE =================
       - name: Prepare Framework Files
         run: |
           mkdir -p framework_out
@@ -123,7 +119,7 @@ jobs:
           draft: false
           prerelease: false
 
-      # ================= 5. PACK VÀ UPLOAD ROM HOÀN CHỈNH =================
+      # ================= 4. PACK VÀ UPLOAD ROM HOÀN CHỈNH =================
       - name: Pack ROM...
         run: |
           python notify.py pack "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}" || true

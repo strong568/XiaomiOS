@@ -65,24 +65,20 @@ jobs:
         run: |
           sudo chmod 777 -R *
 
-      # ================= 1. TRÍCH XUẤT STOCK FRAMEWORK TRƯỚC =================
-      - name: Extract Stock Framework Files...
-        run: |
-          sudo -E bash frameworkExtract.sh stock "${{ inputs.input_url }}"
-          
-      # ================= 2. BUILD VÀ MOD ROM =================
+      # ================= 1. BUILD VÀ MOD ROM =================
+      # (Lưu ý: Bạn chèn lệnh trích xuất stock vào trong build.sh ngay sau đoạn bung payload/super)
       - name: Build ROM...
         env:
           INPUT_URL: ${{ inputs.input_url }}
         run: |
           sudo -E bash build.sh "$INPUT_URL" "${{ github.repository }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
 
-      # ================= 3. TRÍCH XUẤT MODDED FRAMEWORK =================
+      # ================= 2. TRÍCH XUẤT MODDED FRAMEWORK =================
       - name: Extract Modded Framework Files...
         run: |
           sudo -E bash frameworkExtract.sh mod "${{ inputs.input_url }}"
 
-      # ================= 4. GOM FILE VÀ UPLOAD ARTIFACTS & RELEASE =================
+      # ================= 3. GOM FILE VÀ UPLOAD ARTIFACTS & RELEASE =================
       - name: Prepare Framework Files
         run: |
           mkdir -p framework_out
@@ -135,7 +131,6 @@ jobs:
           if [ -f "bin/ddevice/output_url.txt" ]; then
             while IFS= read -r line; do
               [ -z "$line" ] && continue
-              # Tách title và link để hiện đẹp trên Annotations
               title_name=$(echo "$line" | cut -d':' -f1 | xargs)
               link_url=$(echo "$line" | cut -d' ' -f2- | xargs)
               echo "::notice title=${title_name} Download Link::${link_url}"
