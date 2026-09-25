@@ -92,18 +92,31 @@ jobs:
         run: |
           sudo bash packROM.sh
           
-
-
-      - name: Upload ROM to Pixeldrain...
+      - name: Upload ROM and Show Links...
+        env:
+          INPUT_URL: ${{ inputs.input_url }}
         run: |
-          # Chạy uploadROM.sh (kèm cờ -E để giữ biến PIXELDRAIN_API_KEY)
+          # Hiện URL đầu vào ngay trên Annotations
+          echo "::notice title=Base ROM Input URL::$INPUT_URL"
+
+          # Chạy script upload
           sudo -E bash uploadROM.sh
           
-          # Đọc link Pixeldrain từ file do uploadROM.sh ghi ra
+          # Đọc toàn bộ các link kết quả do uploadROM.sh ghi ra
           if [ -f "bin/ddevice/output_url.txt" ]; then
-            DOWNLOAD_URL=$(cat bin/ddevice/output_url.txt)
-            echo "::notice title=Pixeldrain Download Link::$DOWNLOAD_URL"
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              # Tách title và link để hiện đẹp trên Annotations
+              title_name=$(echo "$line" | cut -d':' -f1 | xargs)
+              link_url=$(echo "$line" | cut -d' ' -f2- | xargs)
+              echo "::notice title=${title_name} Download Link::${link_url}"
+            done < bin/ddevice/output_url.txt
+
             echo "============================================="
-            echo "LINK TẢI ROM: $DOWNLOAD_URL"
+            echo "URL ĐẦU VÀO: $INPUT_URL"
+            cat bin/ddevice/output_url.txt
             echo "============================================="
           fi
+          
+
+

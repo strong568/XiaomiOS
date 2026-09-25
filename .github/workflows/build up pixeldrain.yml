@@ -102,19 +102,31 @@ jobs:
           python notify.py pack "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}" || true
           sudo bash packROM.sh
 
-      - name: Upload ROM...
+      - name: Upload ROM and Show link
+        env:
+          INPUT_URL: ${{ inputs.input_url }}
         run: |
           python notify.py upload "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}" || true
           
-          # Chạy uploadROM.sh (kèm cờ -E để giữ biến PIXELDRAIN_API_KEY)
+          # Hiện URL đầu vào lên Annotations
+          echo "::notice title=Base ROM Input URL::$INPUT_URL"
+
+          # Chạy uploadROM.sh
           sudo -E bash uploadROM.sh
           
-          # Đọc link Pixeldrain từ file output do uploadROM.sh tạo ra
+          # Đọc link và hiện lên Annotations
           if [ -f "bin/ddevice/output_url.txt" ]; then
             ROM_URL=$(cat bin/ddevice/output_url.txt)
             echo "ROM_URL=$ROM_URL" >> $GITHUB_ENV
-            echo "::notice title=Pixeldrain Download Link::$ROM_URL"
+
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              title_name=$(echo "$line" | cut -d':' -f1 | xargs)
+              link_url=$(echo "$line" | cut -d' ' -f2- | xargs)
+              echo "::notice title=${title_name} Download Link::${link_url}"
+            done < bin/ddevice/output_url.txt
           fi
+
       
       - name: Success Notification
         if: success()
