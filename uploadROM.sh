@@ -150,8 +150,6 @@ fi
 # ========================================================
 upload "Đang chuẩn bị tải lên Hugging Face..."
 
-#pip install -q --no-cache-dir huggingface_hub
-
 python3 -m pip install --break-system-packages --ignore-installed huggingface_hub
 
 HF_REPO_ID="Strong568/XiaomiOS-ROM"
@@ -170,6 +168,7 @@ else
         python3 - <<EOF
 import os
 import sys
+import traceback
 from huggingface_hub import HfApi
 
 hf_token = os.environ.get("HF_TOKEN")
@@ -178,18 +177,23 @@ file_name = "$final_zip_name"
 repo_id = "$HF_REPO_ID"
 repo_type = "$HF_REPO_TYPE"
 
-api = HfApi(token=hf_token)
-
 try:
+    api = HfApi(token=hf_token)
+    
+    # Tự động tạo repo nếu trên Hugging Face chưa có
+    api.create_repo(repo_id=repo_id, repo_type=repo_type, exist_ok=True)
+
+    print(f"Đang đẩy {file_name} lên thư mục releases/ ...", flush=True)
     api.upload_file(
         path_or_fileobj=file_path,
         path_in_repo=f"releases/{file_name}",
         repo_id=repo_id,
         repo_type=repo_type,
     )
-    print("\n[UPLOAD SUCCESS] File đã tải lên Hugging Face thành công!")
+    print("\n[UPLOAD SUCCESS] Đã tải lên Hugging Face thành công!", flush=True)
 except Exception as e:
-    print(f"\n[UPLOAD ERROR] Hugging Face thất bại: {e}", file=sys.stderr)
+    print(f"\n[UPLOAD ERROR] Chi tiết lỗi:", file=sys.stderr)
+    traceback.print_exc()
     sys.exit(1)
 EOF
 
@@ -202,6 +206,7 @@ EOF
         fi
     fi
 fi
+
 
 # ========================================================
 # 3. Tải lên Gofile.io
