@@ -204,6 +204,45 @@ EOF
 fi
 
 # ========================================================
+# 3. Tải lên Gofile.io
+# ========================================================
+upload "Đang chuẩn bị tải lên Gofile..."
+
+GOFILE_LINK=""
+if [ ! -f "$output_file" ]; then
+    upload "LỖI: Không tìm thấy file output: $output_file"
+else
+    # 1. Lấy server nhận file tốt nhất hiện tại từ API của Gofile
+    SERVER_RESP=$(curl -s "https://api.gofile.io/servers")
+    GF_SERVER=$(echo "$SERVER_RESP" | grep -oP '"name":"\K[^"]+' | head -n 1)
+
+    if [ -z "$GF_SERVER" ]; then
+        upload "Lỗi: Không lấy được server upload của Gofile."
+    else
+        upload "Đang upload file lên server Gofile: $GF_SERVER..."
+        
+        # Tạo tham số xác thực nếu có GOFILE_TOKEN
+        GF_AUTH=""
+        if [ -n "${GOFILE_TOKEN:-}" ]; then
+            GF_AUTH="-F token=${GOFILE_TOKEN}"
+        fi
+
+        # 2. Gửi file zip lên server
+        GF_UPLOAD_RESP=$(curl -s -# -F "file=@$output_file" $GF_AUTH "https://${GF_SERVER}.gofile.io/contents/uploadfile")
+        
+        # 3. Trích xuất link download
+        GOFILE_LINK=$(echo "$GF_UPLOAD_RESP" | grep -oP '"downloadPage":"\K[^"]+' | head -n 1)
+
+        if [ -n "$GOFILE_LINK" ] && [ "$GOFILE_LINK" != "null" ]; then
+            upload "Tải lên Gofile thành công! Link: $GOFILE_LINK"
+            echo "Gofile: $GOFILE_LINK" >> "$work_dir/bin/ddevice/output_url.txt"
+        else
+            upload "Upload Gofile thất bại: $GF_UPLOAD_RESP"
+        fi
+    fi
+fi
+
+# ========================================================
 # Dọn dẹp môi trường & Hiển thị liên kết
 # ========================================================
 upload "Cleaning build temporary files..."
@@ -213,4 +252,6 @@ upload "=============================================="
 upload "Build ${os_type} for ${device_lower} hoàn tất!"
 [ -n "$PIXELDRAIN_LINK" ] && upload "Pixeldrain : $PIXELDRAIN_LINK"
 [ -n "$HF_LINK" ]          && upload "Hugging Face: $HF_LINK"
+[ -n "$GOFILE_LINK" ]      && upload "Gofile      : $GOFILE_LINK"
 upload "=============================================="
+
