@@ -85,30 +85,44 @@ echo "$device_lower" > "$target_out_dir/META-INF/Data/DeviceCode"
 repack "Done"
 
 # ========================================================
-# Chuẩn hóa tên file xuất xưởng & Đóng gói ZIP
+# Chuẩn hóa tên file xuất xưởng, Tính MD5 & Đóng gói ZIP
 # ========================================================
 find "$target_out_dir" -exec touch {} + 2>/dev/null || true
 
 current_date=$(date +"%Y%m%d")
 rom_code="$base_rom_code"
 
-# Tự động nhận diện bản ROM xiaomi.eu qua tên URL, cờ biến hoặc file tạm
+# Tiền tố tên file dựa theo loại ROM
 if [[ "$baserom" == *"xiaomi.eu"* || "$is_base_rom_eu" == "true" || -f "$work_dir/bin/ddevice/is_eu.txt" ]]; then
-    final_zip_name="XiaomiOS_xiaomi.eu_${device_lower}_${rom_code}_mod_${current_date}.zip"
+    base_prefix="XiaomiOS_xiaomi.eu_${device_lower}_${rom_code}"
 else
-    final_zip_name="XiaomiOS_${device_lower}_${rom_code}_mod_${current_date}.zip"
+    base_prefix="XiaomiOS_${device_lower}_${rom_code}"
 fi
 
+temp_zip_name="${base_prefix}_temp.zip"
+
+repack "Packing temporary ZIP to calculate checksum..."
 pushd "$target_out_dir" > /dev/null || exit 1
-zip -r "../${final_zip_name}" ./*
+zip -r "../${temp_zip_name}" ./*
 popd > /dev/null || exit 1
 
-# Dọn dẹp thư mục staging, giữ nguyên file ZIP hoàn chỉnh
+# Dọn dẹp thư mục staging
 rm -rf "$target_out_dir"
+
+# Tính mã MD5 của file ROM vừa build xong và cắt lấy 10 ký tự cuối
+repack "Calculating MD5 checksum of modded ROM..."
+full_md5=$(md5sum "$work_dir/out/${temp_zip_name}" | awk '{print $1}')
+md5="${full_md5: -10}"
+
+# Đặt tên chính thức
+final_zip_name="${base_prefix}_mod_${md5}_${current_date}.zip"
+mv -f "$work_dir/out/${temp_zip_name}" "$work_dir/out/${final_zip_name}"
 
 output_file="$work_dir/out/$final_zip_name"
 repack "Build completed"
-repack "Output: $output_file"
+repack "Full MD5 : $full_md5"
+repack "MD5 (10-last) : $md5"
+repack "Output   : $output_file"
 
 mkdir -p "$work_dir/bin/ddevice"
 echo "$final_zip_name" > "$work_dir/bin/ddevice/output_zip.txt"
