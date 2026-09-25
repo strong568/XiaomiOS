@@ -10,8 +10,41 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
 
     USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
-    # ==================== 1. XỬ LÝ LINK PIXELDRAIN ====================
-    if [[ "$baserom" == *"pixeldrain.com"* ]]; then
+    # ==================== 1. XỬ LÝ LINK GOFILE (/d/...) ====================
+    if [[ "$baserom" == *"gofile.io/d/"* ]]; then
+        info "Gofile link detected, resolving direct download link via API..."
+        content_id=$(echo "$baserom" | grep -oP 'gofile\.io\/d\/\K[a-zA-Z0-9]+')
+        
+        # Khởi tạo token khách vãng lai
+        guest_token=$(curl -s "https://api.gofile.io/accounts" -X POST | grep -oP '"token":"\K[^"]+')
+        
+        if [ -n "$guest_token" ] && [ -n "$content_id" ]; then
+            # Gọi API lấy direct link và tên file
+            content_resp=$(curl -s -H "Authorization: Bearer ${guest_token}" "https://api.gofile.io/contents/${content_id}?wt=4fd6sg89d7s6")
+            direct_gofile_url=$(echo "$content_resp" | grep -oP '"link":"\K[^"]+' | head -n 1)
+            file_name=$(echo "$content_resp" | grep -oP '"name":"\K[^"]+' | head -n 1)
+            
+            if [ -n "$direct_gofile_url" ]; then
+                info "Direct link resolved. Downloading $file_name..."
+                aria2c --header="Cookie: accountToken=${guest_token}" \
+                       --header="User-Agent: $USER_AGENT" \
+                       --check-certificate=false \
+                       --allow-overwrite=true \
+                       --auto-file-renaming=false \
+                       -s16 -x16 -j16 \
+                       -o "$file_name" \
+                       "$direct_gofile_url"
+            else
+                error "Không thể lấy direct link từ Gofile API!"
+                exit 1
+            fi
+        else
+            error "Không thể khởi tạo token khách từ Gofile!"
+            exit 1
+        fi
+
+    # ==================== 2. XỬ LÝ LINK PIXELDRAIN ====================
+    elif [[ "$baserom" == *"pixeldrain.com"* ]]; then
         info "Pixeldrain link detected, downloading via API..."
         pixel_id=$(echo "$baserom" | grep -oP '(u\/|file\/)\K[a-zA-Z0-9]+')
         if [ -n "$pixel_id" ]; then
@@ -25,7 +58,7 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
                    "$direct_pixel" || curl -L -k -A "$USER_AGENT" -O -J "$direct_pixel"
         fi
 
-    # ==================== 2. XỬ LÝ LINK GOOGLE DRIVE ====================
+    # ==================== 3. XỬ LÝ LINK GOOGLE DRIVE ====================
     elif [[ "$baserom" == *"drive.google.com"* || "$baserom" == *"drive.usercontent.google.com"* ]]; then
         info "Google Drive link detected, using gdown..."
         
@@ -40,8 +73,7 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
             gdown "$baserom"
         fi
 
-
-    # ==================== 3. XỬ LÝ NGUỒN TẢI SOURCEFORGE ====================
+    # ==================== 4. XỬ LÝ NGUỒN TẢI SOURCEFORGE ====================
     elif [[ "$baserom" == *"sourceforge.net"* ]]; then
         info "SourceForge detected. Resolving direct mirror host..."
 
@@ -101,7 +133,7 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
             exit 1
         fi
 
-    # ==================== 4. LINK TẢI TRỰC TIẾP KHÁC (OTA ALIYUN...) ====================
+    # ==================== 5. LINK TẢI TRỰC TIẾP KHÁC (Gofile direct, OTA Aliyun...) ====================
     else
         aria2c --max-download-limit=1024M \
                --file-allocation=none \
