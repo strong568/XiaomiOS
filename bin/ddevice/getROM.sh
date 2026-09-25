@@ -10,21 +10,29 @@ if [ ! -f "${baserom}" ] && [ "$(echo "$baserom" | grep -E '^https?://')" != "" 
 
     USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
-    # ==================== 1. XỬ LÝ LINK GOFILE (/d/...) ====================
-    if [[ "$baserom" == *"gofile.io/d/"* ]]; then
-        info "Gofile link detected, resolving direct download link via API..."
+    # ==================== 1. XỬ LÝ LINK GOFILE ====================
+    if [[ "$baserom" == *"gofile.io"* ]]; then
+        info "Gofile link detected, resolving direct download link..."
         content_id=$(echo "$baserom" | grep -oP 'gofile\.io\/d\/\K[a-zA-Z0-9]+')
+        download_done=false
 
-        # Dùng Python xử lý API Gofile để đảm bảo parse JSON chính xác
-        python_res=$(python3 - <<EOF
+        # Cách 1: Giải mã API bằng Python (chỉ chạy nếu là link dạng folder /d/)
+        if [ -n "$content_id" ]; then
+            python_res=$(python3 - <<EOF
 import sys, json, urllib.request
 
 content_id = "$content_id"
-user_agent = "$USER_AGENT"
+ua = "$USER_AGENT"
+headers_base = {
+    "User-Agent": ua,
+    "Accept": "application/json",
+    "Origin": "https://gofile.io",
+    "Referer": f"https://gofile.io/d/{content_id}"
+}
 
 try:
-    # 1. Tạo account/token khách
-    req_acc = urllib.request.Request("https://api.gofile.io/accounts", headers={"User-Agent": user_agent}, method="POST")
+    # 1. Tạo guest token
+    req_acc = urllib.request.Request("https://api.gofile.io/accounts", headers=headers_base, method="POST")
     with urllib.request.urlopen(req_acc) as resp:
         acc_data = json.loads(resp.read().decode())
         token = acc_data.get("data", {}).get("token", "")
@@ -32,56 +40,76 @@ try:
     if not token:
         sys.exit(1)
 
-    # 2. Lấy thông tin nội dung thư mục
+    # 2. Lấy nội dung thư mục
     url_content = f"https://api.gofile.io/contents/{content_id}"
-    req_content = urllib.request.Request(url_content, headers={
-        "User-Agent": user_agent,
-        "Authorization": f"Bearer {token}"
-    })
-    
+    headers_content = headers_base.copy()
+    headers_content["Authorization"] = f"Bearer {token}"
+    headers_content["Cookie"] = f"accountToken={token}"
+
+    req_content = urllib.request.Request(url_content, headers=headers_content)
     with urllib.request.urlopen(req_content) as resp:
         c_data = json.loads(resp.read().decode())
         children = c_data.get("data", {}).get("children", {})
         
-        # Tìm file zip đầu tiên trong danh sách file
         direct_link = ""
         file_name = ""
-        for item_id, item in children.items():
-            if item.get("name", "").endswith(".zip") or item.get("type") == "file":
-                direct_link = item.get("link", "")
-                file_name = item.get("name", "")
-                break
         
+        if isinstance(children, dict):
+            for item_id, item in children.items():
+                if item.get("name", "").endswith(".zip") or item.get("type") == "file":
+                    direct_link = item.get("link", "")
+                    file_name = item.get("name", "")
+                    break
+        elif isinstance(children, list):
+            for item in children:
+                if item.get("name", "").endswith(".zip") or item.get("type") == "file":
+                    direct_link = item.get("link", "")
+                    file_name = item.get("name", "")
+                    break
+
         if direct_link:
             print(f"{token}|{direct_link}|{file_name}")
         else:
             sys.exit(1)
-except Exception as e:
+except Exception:
     sys.exit(1)
 EOF
 )
+            if [ -n "$python_res" ]; then
+                guest_token=$(echo "$python_res" | cut -d'|' -f1)
+                direct_gofile_url=$(echo "$python_res" | cut -d'|' -f2)
+                file_name=$(echo "$python_res" | cut -d'|' -f3)
 
-        if [ -n "$python_res" ]; then
-            guest_token=$(echo "$python_res" | cut -d'|' -f1)
-            direct_gofile_url=$(echo "$python_res" | cut -d'|' -f2)
-            file_name=$(echo "$python_res" | cut -d'|' -f3)
+                info "Direct link resolved: $direct_gofile_url"
+                info "Downloading $file_name via aria2c..."
 
-            info "Direct link resolved: $direct_gofile_url"
-            info "Downloading $file_name..."
-
-            aria2c --header="Cookie: accountToken=${guest_token}" \
-                   --header="User-Agent: $USER_AGENT" \
-                   --check-certificate=false \
-                   --allow-overwrite=true \
-                   --auto-file-renaming=false \
-                   -s16 -x16 -j16 \
-                   -o "$file_name" \
-                   "$direct_gofile_url"
-        else
-            error "Không thể lấy direct link từ Gofile API! Vui lòng dùng link direct store5... hoặc chuyển sang Pixeldrain."
-            exit 1
+                if aria2c --header="Cookie: accountToken=${guest_token}" \
+                          --header="User-Agent: $USER_AGENT" \
+                          --check-certificate=false \
+                          --allow-overwrite=true \
+                          --auto-file-renaming=false \
+                          -s16 -x16 -j16 \
+                          -o "$file_name" \
+                          "$direct_gofile_url"; then
+                    download_done=true
+                fi
+            fi
         fi
 
+        # Cách 2: Dự phòng bằng gofile-dl nếu cách 1 thất bại hoặc link không phải dạng /d/
+        if [ "$download_done" = false ]; then
+            warn "API resolve failed or direct link provided, fallback to gofile-dl..."
+            python3 -m pip install -q --no-cache-dir gofile-dl 2>/dev/null || pip3 install -q gofile-dl
+            
+            if python3 -m gofile_dl "$baserom"; then
+                download_done=true
+            fi
+        fi
+
+        if [ "$download_done" = false ]; then
+            error "Không thể tải file từ Gofile! Vui lòng dùng link Pixeldrain."
+            exit 1
+        fi
 
     # ==================== 2. XỬ LÝ LINK PIXELDRAIN ====================
     elif [[ "$baserom" == *"pixeldrain.com"* ]]; then
