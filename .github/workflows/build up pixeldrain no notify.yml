@@ -16,10 +16,14 @@ on:
 jobs:
   Initialize:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       PIXELDRAIN_API_KEY: ${{ secrets.PIXELDRAIN_API_KEY }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       GOFILE_TOKEN: ${{ secrets.GOFILE_TOKEN }}
+      IA_ACCESS_KEY: ${{ secrets.IA_ACCESS_KEY }}
+      IA_SECRET_KEY: ${{ secrets.IA_SECRET_KEY }}
     steps:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
@@ -86,6 +90,25 @@ jobs:
           name: ${{ env.DUMP_MOD_NAME }}
           path: ${{ env.DUMP_MOD_PATH }}
           retention-days: 7
+
+      # ================= UPLOAD 2 FILE ZIP LÊN GITHUB RELEASES (LƯU VĨNH VIỄN) =================
+      - name: Release Framework to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: framework-${{ github.run_id }}
+          name: "Framework Dump: ${{ env.DUMP_MOD_NAME }}"
+          body: |
+            ### Trích xuất Framework tự động
+            - **Run ID**: `${{ github.run_id }}`
+            - **Stock Framework**: `${{ env.DUMP_STOCK_NAME }}`
+            - **Modded Framework**: `${{ env.DUMP_MOD_NAME }}`
+          files: |
+            ${{ env.DUMP_STOCK_PATH }}${{ env.DUMP_MOD_PATH }}
+          draft: false
+          prerelease: false
       # ===================================================================
 
       - name: Pack ROM...
@@ -117,6 +140,3 @@ jobs:
             cat bin/ddevice/output_url.txt
             echo "============================================="
           fi
-          
-
-
