@@ -77,6 +77,10 @@ jobs:
       - name: Build ROM...
         env:
           INPUT_URL: ${{ inputs.input_url }}
+          PIXELDRAIN_API_KEY: ${{ secrets.PIXELDRAIN_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO: "Strong568/Mirror-Cloud"
+          HF_REPO_TYPE: "model" # đổi thành "dataset" nếu repo này bạn tạo dưới dạng Dataset
         run: |
           sudo -E bash build.sh "$INPUT_URL" "${{ github.repository }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
 
