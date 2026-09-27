@@ -120,6 +120,8 @@ jobs:
       - name: Upload ROM and Show Links...
         env:
           INPUT_URL: ${{ inputs.input_url }}
+          RCLONE_CONFIG_DATA: ${{ secrets.RCLONE_CONFIG }}
+        
         run: |
           # Hiện URL đầu vào ngay trên Annotations
           echo "::notice title=Base ROM Input URL::$INPUT_URL"

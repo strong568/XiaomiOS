@@ -128,6 +128,8 @@ jobs:
       - name: Upload ROM and Show link
         env:
           INPUT_URL: ${{ inputs.input_url }}
+          RCLONE_CONFIG_DATA: ${{ secrets.RCLONE_CONFIG }}
+
         run: |
           python notify.py upload "${{ github.repository }}" "${{ inputs.input_url }}" "xiaomi" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}" || true
           
