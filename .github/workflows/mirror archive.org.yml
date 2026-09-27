@@ -96,33 +96,31 @@ jobs:
           echo "✅ File ready: $FILE_NAME"
 
       - name: Upload to Archive.org
+        continue-on-error: true
         env:
           IA_ACCESS_KEY: ${{ secrets.IA_ACCESS_KEY }}
           IA_SECRET_KEY: ${{ secrets.IA_SECRET_KEY }}
         run: |
           echo "🚀 Đang chuẩn bị tải lên Archive.org..."
 
-          if [[ -z "${IA_ACCESS_KEY}" \vert{}\vert{} -z "${IA_SECRET_KEY}" ]]; then
-            echo "❌ CẢNH BÁO: Không tìm thấy IA_ACCESS_KEY hoặc IA_SECRET_KEY trong Secrets!"
-            exit 1
+          if [ -z "${IA_ACCESS_KEY}" ] \vert{}\vert{} [ -z "${IA_SECRET_KEY}" ]; then
+            echo "⚠️ CẢNH BÁO: Không tìm thấy IA_ACCESS_KEY hoặc IA_SECRET_KEY trong Secrets, bỏ qua bước này!"
+          else
+            ITEM_ID="${{ github.event.inputs.ia_item_id }}"
+
+            mkdir -p ~/.config
+            printf "[s3]\naccess = %s\nsecret = %s\n" "${IA_ACCESS_KEY}" "${IA_SECRET_KEY}" > ~/.config/ia.ini
+
+            echo "Bắt đầu upload $FILE_NAME lên item: $ITEM_ID..."
+            ia upload "$ITEM_ID" "$FILE_NAME" \
+              --metadata="mediatype:software" \
+              --metadata="collection:opensource_software" \
+              --retries=5
+
+            DOWNLOAD_URL="https://archive.org/download/${ITEM_ID}/${FILE_NAME}"
+            echo "IA_LINK=${DOWNLOAD_URL}" >> $GITHUB_ENV
+            echo "✅ Upload Archive.org hoàn tất: ${DOWNLOAD_URL}"
           fi
-
-          ITEM_ID="${{ github.event.inputs.ia_item_id }}"
-
-          # Ghi cấu hình S3 cho CLI ia
-          mkdir -p ~/.config
-          printf "[s3]\naccess = %s\nsecret = %s\n" "${IA_ACCESS_KEY}" "${IA_SECRET_KEY}" > ~/.config/ia.ini
-
-          echo "Bắt đầu upload $FILE_NAME lên item: $ITEM_ID..."
-          ia upload "$ITEM_ID" "$FILE_NAME" \
-            --metadata="mediatype:software" \
-            --metadata="collection:opensource_software" \
-            --retries=5
-
-          # Tạo link trực tiếp chuẩn xác
-          DOWNLOAD_URL="https://archive.org/download/${ITEM_ID}/${FILE_NAME}"
-          echo "IA_LINK=${DOWNLOAD_URL}" >> $GITHUB_ENV
-          echo "✅ Upload hoàn tất: ${DOWNLOAD_URL}"
 
       - name: Workflow Summary & Notification
         if: always()
