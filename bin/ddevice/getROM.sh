@@ -144,8 +144,20 @@ EOF
             error "Không thể bóc tách File ID từ link Google Drive!"
             exit 1
         fi
+        
+        # Xử lý Cookies nếu có biến GDRIVE_COOKIES truyền từ GitHub Secrets
+        COOKIE_OPT=""
+        if [ -n "${GDRIVE_COOKIES:-}" ]; then
+            info "🔑 Đã tìm thấy cookie Google Drive, kích hoạt vượt hạn ngạch tải (bypass quota)..."
+            echo "$GDRIVE_COOKIES" > /tmp/gdrive_cookies.txt
+            COOKIE_OPT="--cookies /tmp/gdrive_cookies.txt"
+        fi
 
-        gdown "https://drive.google.com/uc?id=$FILE_ID&confirm=t" --fuzzy
+        # Tiến hành tải file bằng gdown kèm cookies
+        gdown "https://drive.google.com/uc?id=${FILE_ID}" $COOKIE_OPT || \
+        gdown "https://drive.google.com/uc?id=${FILE_ID}&confirm=t" --fuzzy $COOKIE_OPT
+        
+        # gdown "https://drive.google.com/uc?id=$FILE_ID&confirm=t" --fuzzy
 
 
     # ==================== 4. XỬ LÝ NGUỒN TẢI SOURCEFORGE ====================
