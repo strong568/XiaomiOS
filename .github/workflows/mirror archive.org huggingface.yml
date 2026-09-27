@@ -146,7 +146,7 @@ jobs:
             echo "Bắt đầu upload $FILE_NAME lên Strong568/Mirror-Cloud..."
             hf upload Strong568/Mirror-Cloud "$FILE_NAME" "$FILE_NAME" \
               --repo-type model \
-              --token "$HF_TOKEN"
+              # --token "$HF_TOKEN"
 
             HF_LINK="https://huggingface.co/Strong568/Mirror-Cloud/resolve/main/${FILE_NAME}"
             echo "HF_LINK=${HF_LINK}" >> $GITHUB_ENV
