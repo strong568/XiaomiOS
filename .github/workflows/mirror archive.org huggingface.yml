@@ -153,10 +153,10 @@ jobs:
           if [ "${{ job.status }}" == "success" ]; then
             echo "TRẠNG THÁI   : THÀNH CÔNG (SUCCESS)"
             echo "LINK GỐC     : ${{ github.event.inputs.file_url }}"
-            echo "ARCHIVE LINK : ${{ env.IA_LINK:-'N/A' }}"
-            echo "HF LINK      : ${{ env.HF_LINK:-'N/A' }}"
-            echo "TÊN FILE     : ${{ env.FILE_NAME }}"
-            echo "DUNG LƯỢNG   : ${{ env.FILE_SIZE }} bytes"
+            echo "ARCHIVE LINK : ${IA_LINK:-N/A}"
+            echo "HF LINK      : ${HF_LINK:-N/A}"
+            echo "TÊN FILE     : ${FILE_NAME}"
+            echo "DUNG LƯỢNG   : ${FILE_SIZE} bytes"
             echo "ITEM ID      : $ITEM_ID"
             echo "=========================================="
 
@@ -164,15 +164,15 @@ jobs:
               echo "### ✅ ROM Mirror Completed Successfully"
               echo ""
               echo "- **Link gốc (Input):** [${{ github.event.inputs.file_url }}](${{ github.event.inputs.file_url }})"
-              if [ -n "${{ env.IA_LINK }}" ]; then
-                echo "- **Archive.org Download:** [Tải từ Archive.org](${{ env.IA_LINK }})"
+              if [ -n "${IA_LINK:-}" ]; then
+                echo "- **Archive.org Download:** [Tải từ Archive.org](${IA_LINK})"
               fi
-              if [ -n "${{ env.HF_LINK }}" ]; then
-                echo "- **Hugging Face Direct Download:** [Tải từ Hugging Face](${{ env.HF_LINK }})"
+              if [ -n "${HF_LINK:-}" ]; then
+                echo "- **Hugging Face Direct Download:** [Tải từ Hugging Face](${HF_LINK})"
                 echo "- **Hugging Face Repo:** [Strong568/Mirror-Cloud](https://huggingface.co/Strong568/Mirror-Cloud)"
               fi
-              echo "- **File Name:** \`${{ env.FILE_NAME }}\`"
-              echo "- **File Size:** \`${{ env.FILE_SIZE }} bytes\`"
+              echo "- **File Name:** \`${FILE_NAME}\`"
+              echo "- **File Size:** \`${FILE_SIZE} bytes\`"
               echo "- **Archive.org Item ID:** \`$ITEM_ID\`"
             } >> $GITHUB_STEP_SUMMARY
           else
