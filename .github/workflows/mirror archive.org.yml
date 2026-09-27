@@ -44,8 +44,18 @@ jobs:
               echo "❌ Failed to extract File ID"
               exit 1
             fi
-
-            gdown "https://drive.google.com/uc?id=$FILE_ID&confirm=t" --fuzzy
+            # Xử lý Cookie để vượt giới hạn Quota (nếu có cấu hình GDRIVE_COOKIES trong Secrets)
+            COOKIE_OPT=""
+            if [ -n "${GDRIVE_COOKIES:-}" ]; then
+              echo "🔑 Đã tìm thấy cookie Google Drive, kích hoạt vượt hạn ngạch tải..."
+              echo "$GDRIVE_COOKIES" > cookies.txt
+              COOKIE_OPT="--cookies cookies.txt"
+            fi
+            
+            # Thử tải bằng gdown với link uc chuẩn
+              gdown "https://drive.google.com/uc?id=${FILE_ID}" || \
+              # # Tải file bằng gdown kèm cookie nếu có
+            #gdown "https://drive.google.com/uc?id=${FILE_ID}" $COOKIE_OPT
 
           # 2. Pixeldrain
           elif echo "$RAW_URL" | grep -q "pixeldrain.com"; then
