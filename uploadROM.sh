@@ -261,7 +261,51 @@ else
 fi
 
 # ========================================================
-# 4. Tải lên Internet Archive (Archive.org)
+# 4. Tải lên Google Drive (Thư mục XiaomiOS-Rom)
+# ========================================================
+upload "Đang chuẩn bị tải lên Google Drive..."
+
+GDRIVE_LINK=""
+if [ -z "${RCLONE_CONFIG_DATA:-}" ]; then
+    upload "CẢNH BÁO: Không tìm thấy RCLONE_CONFIG_DATA trong Secrets, bỏ qua upload Google Drive."
+else
+    if [ ! -f "$output_file" ]; then
+        upload "LỖI: Không tìm thấy file output: $output_file"
+    else
+        # Cài đặt rclone nếu runner chưa có
+        if ! command -v rclone &> /dev/null; then
+            upload "Cài đặt rclone..."
+            curl https://rclone.org/install.sh | bash > /dev/null 2>&1
+        fi
+
+        # Nạp cấu hình Rclone
+        mkdir -p ~/.config/rclone
+        echo "$RCLONE_CONFIG_DATA" > ~/.config/rclone/rclone.conf
+
+        upload "Bắt đầu upload $final_zip_name lên Google Drive (thư mục XiaomiOS-Rom)..."
+        # Rclone sẽ tự động tạo thư mục XiaomiOS-Rom nếu chưa có
+        rclone copy "$output_file" "gdrive:XiaomiOS-Rom" \
+            --progress \
+            --drive-chunk-size 64M \
+            --transfers 4
+
+        if [ $? -eq 0 ]; then
+            # Lấy liên kết chia sẻ công khai
+            GDRIVE_LINK=$(rclone link "gdrive:XiaomiOS-Rom/$final_zip_name" 2>/dev/null || echo "")
+            upload "Tải lên Google Drive thành công!"
+            if [ -n "$GDRIVE_LINK" ]; then
+                echo "GoogleDrive: $GDRIVE_LINK" >> "$work_dir/bin/ddevice/output_url.txt"
+            else
+                echo "GoogleDrive: https://drive.google.com/" >> "$work_dir/bin/ddevice/output_url.txt"
+            fi
+        else
+            upload "Upload Google Drive thất bại!"
+        fi
+    fi
+fi
+
+# ========================================================
+# 5. Tải lên Internet Archive (Archive.org)
 # ========================================================
 upload "Đang chuẩn bị tải lên Archive.org..."
 
