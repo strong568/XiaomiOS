@@ -102,20 +102,16 @@ jobs:
         run: |
           echo "🚀 Đang chuẩn bị tải lên Archive.org..."
 
-          if [[ -z "${IA_ACCESS_KEY}" || -z "${IA_SECRET_KEY}" ]]; then
+          if [[ -z "${IA_ACCESS_KEY}" \vert{}\vert{} -z "${IA_SECRET_KEY}" ]]; then
             echo "❌ CẢNH BÁO: Không tìm thấy IA_ACCESS_KEY hoặc IA_SECRET_KEY trong Secrets!"
             exit 1
           fi
 
           ITEM_ID="${{ github.event.inputs.ia_item_id }}"
 
-          # Khởi tạo trực tiếp file config ia.ini tránh lỗi Account not found
+          # Ghi cấu hình S3 cho CLI ia
           mkdir -p ~/.config
-          cat <<EOF > ~/.config/ia.ini
-          [s3]
-           access = ${IA_ACCESS_KEY}
-           secret = ${IA_SECRET_KEY}
-           EOF
+          printf "[s3]\naccess = %s\nsecret = %s\n" "${IA_ACCESS_KEY}" "${IA_SECRET_KEY}" > ~/.config/ia.ini
 
           echo "Bắt đầu upload $FILE_NAME lên item: $ITEM_ID..."
           ia upload "$ITEM_ID" "$FILE_NAME" \
@@ -123,13 +119,17 @@ jobs:
             --metadata="collection:opensource_software" \
             --retries=5
 
-          IA_LINK="https://archive.org/download/${ITEM_ID}/${FILE_NAME}"
-          echo "IA_LINK=$IA_LINK" >> $GITHUB_ENV
-          echo "✅ Upload hoàn tất: $IA_LINK"
+          # Tạo link trực tiếp chuẩn xác
+          DOWNLOAD_URL="https://archive.org/download/${ITEM_ID}/${FILE_NAME}"
+          echo "IA_LINK=${DOWNLOAD_URL}" >> $GITHUB_ENV
+          echo "✅ Upload hoàn tất: ${DOWNLOAD_URL}"
 
       - name: Workflow Summary & Notification
         if: always()
         run: |
+          ITEM_ID="${{ github.event.inputs.ia_item_id }}"
+          FINAL_LINK="https://archive.org/download/${ITEM_ID}/${{ env.FILE_NAME }}"
+
           echo "=========================================="
           echo "             WORKFLOW REPORT              "
           echo "=========================================="
@@ -137,33 +137,31 @@ jobs:
           if [ "${{ job.status }}" == "success" ]; then
             echo "TRẠNG THÁI   : THÀNH CÔNG (SUCCESS)"
             echo "LINK GỐC     : ${{ github.event.inputs.file_url }}"
-            echo "LINK MIRROR  : ${{ env.IA_LINK }}"
+            echo "LINK MIRROR  : $FINAL_LINK"
             echo "TÊN FILE     : ${{ env.FILE_NAME }}"
             echo "DUNG LƯỢNG   : ${{ env.FILE_SIZE }} bytes"
-            echo "ITEM ID      : ${{ github.event.inputs.ia_item_id }}"
+            echo "ITEM ID      : $ITEM_ID"
             echo "=========================================="
 
-            # Hiển thị trực tiếp trên trang tóm tắt của GitHub Run
             {
               echo "### ✅ ROM Mirror Completed Successfully"
               echo ""
               echo "- **Link gốc (Input):** [${{ github.event.inputs.file_url }}](${{ github.event.inputs.file_url }})"
-              echo "- **Link Mirror (Archive.org):** [${{ env.IA_LINK }}](${{ env.IA_LINK }})"
+              echo "- **Link Mirror (Archive.org):** [$FINAL_LINK]($FINAL_LINK)"
               echo "- **File Name:** \`${{ env.FILE_NAME }}\`"
               echo "- **File Size:** \`${{ env.FILE_SIZE }} bytes\`"
-              echo "- **Item ID:** \`${{ github.event.inputs.ia_item_id }}\`"
+              echo "- **Item ID:** \`$ITEM_ID\`"
             } >> $GITHUB_STEP_SUMMARY
           else
             echo "TRẠNG THÁI   : THẤT BẠI (FAILED)"
             echo "LINK GỐC     : ${{ github.event.inputs.file_url }}"
-            echo "ITEM ID      : ${{ github.event.inputs.ia_item_id }}"
+            echo "ITEM ID      : $ITEM_ID"
             echo "=========================================="
 
             {
               echo "### ❌ ROM Mirror Failed"
               echo ""
               echo "- **Link gốc (Input):** [${{ github.event.inputs.file_url }}](${{ github.event.inputs.file_url }})"
-              echo "- **Item ID:** \`${{ github.event.inputs.ia_item_id }}\`"
-              echo "- *Tải file hoặc upload thất bại. Vui lòng kiểm tra lại log chi tiết ở các bước trên.*"
+              echo "- **Item ID:** \`$ITEM_ID\`"
             } >> $GITHUB_STEP_SUMMARY
           fi
