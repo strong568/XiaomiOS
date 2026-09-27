@@ -102,14 +102,20 @@ jobs:
         run: |
           echo "🚀 Đang chuẩn bị tải lên Archive.org..."
 
-          if [ -z "${IA_ACCESS_KEY:-}" ] \vert{}\vert{} [ -z "${IA_SECRET_KEY:-}" ]; then
+          if [[ -z "${IA_ACCESS_KEY}" || -z "${IA_SECRET_KEY}" ]]; then
             echo "❌ CẢNH BÁO: Không tìm thấy IA_ACCESS_KEY hoặc IA_SECRET_KEY trong Secrets!"
             exit 1
           fi
 
           ITEM_ID="${{ github.event.inputs.ia_item_id }}"
 
-          ia configure --username="$IA_ACCESS_KEY" --password="$IA_SECRET_KEY"
+          # Khởi tạo trực tiếp file config ia.ini tránh lỗi Account not found
+          mkdir -p ~/.config
+          cat <<EOF > ~/.config/ia.ini
+[s3]
+access = ${IA_ACCESS_KEY}
+secret = ${IA_SECRET_KEY}
+EOF
 
           echo "Bắt đầu upload $FILE_NAME lên item: $ITEM_ID..."
           ia upload "$ITEM_ID" "$FILE_NAME" \
