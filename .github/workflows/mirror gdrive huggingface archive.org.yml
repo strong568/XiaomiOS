@@ -40,6 +40,14 @@ jobs:
 
             if [ -n "$FILE_ID" ]; then
               echo "Trích xuất thành công File ID: $FILE_ID"
+              # Xử lý Cookie để vượt giới hạn Quota (nếu có cấu hình GDRIVE_COOKIES trong Secrets)
+            COOKIE_OPT=""
+            if [ -n "${GDRIVE_COOKIES:-}" ]; then
+              echo "🔑 Đã tìm thấy cookie Google Drive, kích hoạt vượt hạn ngạch tải..."
+              echo "$GDRIVE_COOKIES" > cookies.txt
+              COOKIE_OPT="--cookies cookies.txt"
+            fi
+            
               # Thử tải bằng gdown với link uc chuẩn
               gdown "https://drive.google.com/uc?id=${FILE_ID}" || \
               # Dự phòng: tải trực tiếp bằng aria2c nếu link usercontent có sẵn auth
