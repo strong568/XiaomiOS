@@ -1,0 +1,210 @@
+name: mirror-cloud (Multi-Host Gdrive to HuggingFace & archive.org)
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_url:
+        description: "Google Drive / Pixeldrain / Direct download link"
+        required: true
+
+      ia_item_id:
+        description: "Archive.org Item ID"
+        required: true
+        default: "mirror-cloud"
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y python3-pip aria2 wget curl
+          pip3 install --no-cache-dir gdown internetarchive huggingface_hub
+
+      - name: Download file (Multi-host support)
+        run: |
+          echo "🔽 Bắt đầu tải file..."
+
+          RAW_URL="${{ github.event.inputs.file_url }}"
+          echo "Link nguồn: $RAW_URL"
+          USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
+          # 1. Google Drive (Hỗ trợ drive.google.com và drive.usercontent.google.com)
+          if echo "$RAW_URL" | grep -qE "drive\.google\.com|drive\.usercontent\.google\.com"; then
+            echo "📦 Nhận diện nguồn: Google Drive"
+
+            # Bóc tách chính xác ID file (xử lý cả dạng /d/<ID>, id=<ID>, hoặc url encode)
+            FILE_ID=$(echo "$RAW_URL" | grep -oP '(id=|\/d\/)\K[a-zA-Z0-9_-]+' | head -n 1)
+
+            if [ -n "$FILE_ID" ]; then
+              echo "Trích xuất thành công File ID: $FILE_ID"
+              # Thử tải bằng gdown với link uc chuẩn
+              gdown "https://drive.google.com/uc?id=${FILE_ID}" || \
+              # Dự phòng: tải trực tiếp bằng aria2c nếu link usercontent có sẵn auth
+              aria2c --header="User-Agent: $USER_AGENT" \
+                     --check-certificate=false \
+                     --allow-overwrite=true \
+                     --auto-file-renaming=false \
+                     --content-disposition \
+                     -s16 -x16 -j16 \
+                     "$RAW_URL"
+            else
+              echo "⚠️ Không bóc tách được ID, thử tải trực tiếp URL..."
+              aria2c --header="User-Agent: $USER_AGENT" \
+                     --check-certificate=false \
+                     --allow-overwrite=true \
+                     --auto-file-renaming=false \
+                     --content-disposition \
+                     -s16 -x16 -j16 \
+                     "$RAW_URL"
+            fi
+
+
+          # 2. Pixeldrain
+          elif echo "$RAW_URL" | grep -q "pixeldrain.com"; then
+            echo "📦 Nhận diện nguồn: Pixeldrain"
+
+            PIXEL_ID=$(echo "$RAW_URL" | grep -oP '(u\/|file\/)\K[a-zA-Z0-9]+')
+            if [ -z "$PIXEL_ID" ]; then
+              echo "❌ Không trích xuất được Pixeldrain ID!"
+              exit 1
+            fi
+
+            DIRECT_PIXEL="https://pixeldrain.com/api/file/${PIXEL_ID}"
+            aria2c --header="User-Agent: $USER_AGENT" \
+                   --check-certificate=false \
+                   --allow-overwrite=true \
+                   --auto-file-renaming=false \
+                   --content-disposition \
+                   --summary-interval=1 \
+                   -s16 -x16 -j16 \
+                   "$DIRECT_PIXEL"
+
+          # 3. Direct Link
+          else
+            echo "🌐 Nhận diện nguồn: Direct Link"
+            wget -c --progress=bar:force:noscroll --content-disposition "$RAW_URL"
+          fi
+
+          echo "📂 Danh sách file sau khi tải:"
+          ls -lh
+
+          # Lấy file vừa tải có dung lượng lớn nhất
+          FILE_NAME=$(ls -S | head -n 1)
+
+          if [ -z "$FILE_NAME" ]; then
+            echo "❌ Không tìm thấy file hợp lệ sau khi tải!"
+            exit 1
+          fi
+
+          FILE_SIZE=$(stat -c\%s "$FILE_NAME")
+          echo "📏 Dung lượng: $FILE_SIZE bytes"
+
+          if [ "$FILE_SIZE" -lt 104857600 ]; then
+            echo "❌ File quá nhỏ (< 100MB), có thể link đã bị giới hạn hoặc tải lỗi."
+            exit 1
+          fi
+
+          echo "🎉 Đã hoàn thành 100% quá trình tải về máy chủ Runner!"
+          echo "FILE_NAME=$FILE_NAME" >> $GITHUB_ENV
+          echo "FILE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
+          echo "✅ Sẵn sàng file: $FILE_NAME"
+
+
+      - name: Upload to Hugging Face
+        continue-on-error: true
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          echo "🚀 Đang chuẩn bị tải lên Hugging Face..."
+
+          if [ -z "${HF_TOKEN}" ]; then
+            echo "⚠️ CẢNH BÁO: Không tìm thấy HF_TOKEN trong Secrets, bỏ qua bước này!"
+          else
+            echo "Bắt đầu upload $FILE_NAME lên Strong568/Mirror-Cloud..."
+            hf upload Strong568/Mirror-Cloud "$FILE_NAME" "$FILE_NAME" \
+              --repo-type model \
+              --token "$HF_TOKEN"
+
+            HF_LINK="https://huggingface.co/Strong568/Mirror-Cloud/resolve/main/${FILE_NAME}"
+            echo "HF_LINK=${HF_LINK}" >> $GITHUB_ENV
+            echo "✅ Upload Hugging Face hoàn tất: ${HF_LINK}"
+          fi
+          
+      - name: Upload to Archive.org
+        continue-on-error: true
+        env:
+          IA_ACCESS_KEY: ${{ secrets.IA_ACCESS_KEY }}
+          IA_SECRET_KEY: ${{ secrets.IA_SECRET_KEY }}
+        run: |
+          echo "🚀 Đang chuẩn bị tải lên Archive.org..."
+
+          if [ -z "${IA_ACCESS_KEY}" ] \vert{}\vert{} [ -z "${IA_SECRET_KEY}" ]; then
+            echo "⚠️ CẢNH BÁO: Không tìm thấy IA_ACCESS_KEY hoặc IA_SECRET_KEY trong Secrets, bỏ qua bước này!"
+          else
+            ITEM_ID="${{ github.event.inputs.ia_item_id }}"
+
+            mkdir -p ~/.config
+            printf "[s3]\naccess = %s\nsecret = %s\n" "${IA_ACCESS_KEY}" "${IA_SECRET_KEY}" > ~/.config/ia.ini
+
+            echo "Bắt đầu upload $FILE_NAME lên item: $ITEM_ID..."
+            ia upload "$ITEM_ID" "$FILE_NAME" \
+              --metadata="mediatype:software" \
+              --metadata="collection:opensource_software" \
+              --retries=5
+
+            DOWNLOAD_URL="https://archive.org/download/${ITEM_ID}/${FILE_NAME}"
+            echo "IA_LINK=${DOWNLOAD_URL}" >> $GITHUB_ENV
+            echo "✅ Upload Archive.org hoàn tất: ${DOWNLOAD_URL}"
+          fi
+
+      - name: Workflow Summary & Notification
+        if: always()
+        run: |
+          ITEM_ID="${{ github.event.inputs.ia_item_id }}"
+
+          echo "=========================================="
+          echo "             WORKFLOW REPORT              "
+          echo "=========================================="
+          
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "TRẠNG THÁI   : THÀNH CÔNG (SUCCESS)"
+            echo "LINK GỐC     : ${{ github.event.inputs.file_url }}"
+            echo "ARCHIVE LINK : ${IA_LINK:-N/A}"
+            echo "HF LINK      : ${HF_LINK:-N/A}"
+            echo "TÊN FILE     : ${FILE_NAME}"
+            echo "DUNG LƯỢNG   : ${FILE_SIZE} bytes"
+            echo "ITEM ID      : $ITEM_ID"
+            echo "=========================================="
+
+            {
+              echo "### ✅ ROM Mirror Completed Successfully"
+              echo ""
+              echo "- **Link gốc (Input):** [${{ github.event.inputs.file_url }}](${{ github.event.inputs.file_url }})"
+              if [ -n "${IA_LINK:-}" ]; then
+                echo "- **Archive.org Download:** [Tải từ Archive.org](${IA_LINK})"
+              fi
+              if [ -n "${HF_LINK:-}" ]; then
+                echo "- **Hugging Face Direct Download:** [Tải từ Hugging Face](${HF_LINK})"
+                echo "- **Hugging Face Repo:** [Strong568/Mirror-Cloud](https://huggingface.co/Strong568/Mirror-Cloud)"
+              fi
+              echo "- **File Name:** \`${FILE_NAME}\`"
+              echo "- **File Size:** \`${FILE_SIZE} bytes\`"
+              echo "- **Archive.org Item ID:** \`$ITEM_ID\`"
+            } >> $GITHUB_STEP_SUMMARY
+          else
+            echo "TRẠNG THÁI   : THẤT BẠI (FAILED)"
+            echo "LINK GỐC     : ${{ github.event.inputs.file_url }}"
+            echo "ITEM ID      : $ITEM_ID"
+            echo "=========================================="
+
+            {
+              echo "### ❌ ROM Mirror Failed"
+              echo ""
+              echo "- **Link gốc (Input):** [${{ github.event.inputs.file_url }}](${{ github.event.inputs.file_url }})"
+              echo "- **Item ID:** \`$ITEM_ID\`"
+              echo "- *Tải file hoặc upload thất bại. Vui lòng kiểm tra lại log chi tiết ở các bước trên.*"
+            } >> $GITHUB_STEP_SUMMARY
+          fi
