@@ -129,17 +129,24 @@ EOF
     # ==================== 3. XỬ LÝ LINK GOOGLE DRIVE ====================
     elif [[ "$baserom" == *"drive.google.com"* || "$baserom" == *"drive.usercontent.google.com"* ]]; then
         info "Google Drive link detected, using gdown..."
-        
-        python3 -m pip install -q --no-cache-dir gdown 2>/dev/null || pip3 install -q gdown
 
-        # Bóc tách ID file từ link (bắt được cả dạng id= và /d/)
-        GDRIVE_ID=$(echo "$baserom" | grep -oP '(id=|\/d\/)\K[a-zA-Z0-9_-]+')
-
-        if [ -n "$GDRIVE_ID" ]; then
-            gdown "https://drive.google.com/uc?id=${GDRIVE_ID}"
-        else
-            gdown "$baserom"
+        if ! command -v gdown &> /dev/null; then
+            python3 -m pip install -q --no-cache-dir gdown 2>/dev/null || pip3 install -q gdown
         fi
+
+        FILE_ID=$(echo "$baserom" | sed -E 's#.*/d/([^/]+).*#\1#')
+
+        if [ "$FILE_ID" = "$baserom" ]; then
+            FILE_ID=$(echo "$baserom" | sed -E 's/.*id=([^&]+).*/\1/')
+        fi
+
+        if [ -z "$FILE_ID" ] || [ "$FILE_ID" = "$baserom" ]; then
+            error "Không thể bóc tách File ID từ link Google Drive!"
+            exit 1
+        fi
+
+        gdown "https://drive.google.com/uc?id=$FILE_ID&confirm=t" --fuzzy
+
 
     # ==================== 4. XỬ LÝ NGUỒN TẢI SOURCEFORGE ====================
     elif [[ "$baserom" == *"sourceforge.net"* ]]; then
