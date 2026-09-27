@@ -1,0 +1,163 @@
+name: mirror-cloud (Multi-Host to Archive.org)
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_url:
+        description: "Google Drive / Pixeldrain / Direct download link"
+        required: true
+
+      ia_item_id:
+        description: "Archive.org Item ID"
+        required: true
+        default: "mirror-cloud"
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y python3-pip aria2 wget curl
+          pip3 install --no-cache-dir gdown internetarchive
+
+      - name: Download file (Multi-host support)
+        run: |
+          echo "🔽 Starting download..."
+
+          RAW_URL="${{ github.event.inputs.file_url }}"
+          echo "Input URL: $RAW_URL"
+          USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
+          # 1. Google Drive
+          if echo "$RAW_URL" | grep -q "drive.google.com"; then
+            echo "📦 Google Drive detected"
+
+            FILE_ID=$(echo "$RAW_URL" | sed -E 's#.*/d/([^/]+).*#\1#')
+            if [ "$FILE_ID" = "$RAW_URL" ]; then
+              FILE_ID=$(echo "$RAW_URL" | sed -E 's/.*id=([^&]+).*/\1/')
+            fi
+
+            if [ -z "$FILE_ID" ] || [ "$FILE_ID" = "$RAW_URL" ]; then
+              echo "❌ Failed to extract File ID"
+              exit 1
+            fi
+
+            gdown "https://drive.google.com/uc?id=$FILE_ID&confirm=t" --fuzzy
+
+          # 2. Pixeldrain
+          elif echo "$RAW_URL" | grep -q "pixeldrain.com"; then
+            echo "📦 Pixeldrain detected"
+
+            PIXEL_ID=$(echo "$RAW_URL" | grep -oP '(u\/|file\/)\K[a-zA-Z0-9]+')
+            if [ -z "$PIXEL_ID" ]; then
+              echo "❌ Failed to extract Pixeldrain ID"
+              exit 1
+            fi
+
+            DIRECT_PIXEL="https://pixeldrain.com/api/file/${PIXEL_ID}"
+            aria2c --header="User-Agent: $USER_AGENT" \
+                   --check-certificate=false \
+                   --allow-overwrite=true \
+                   --auto-file-renaming=false \
+                   --content-disposition \
+                   -s16 -x16 -j16 \
+                   "$DIRECT_PIXEL" || curl -L -k -A "$USER_AGENT" -O -J "$DIRECT_PIXEL"
+
+          # 3. Direct Link
+          else
+            echo "🌐 Direct link detected"
+            wget -c --content-disposition "$RAW_URL"
+          fi
+
+          echo "📂 Files downloaded:"
+          ls -lh
+
+          # Lấy file vừa tải có dung lượng lớn nhất
+          FILE_NAME=$(ls -S | head -n 1)
+
+          if [ -z "$FILE_NAME" ]; then
+            echo "❌ No file found"
+            exit 1
+          fi
+
+          FILE_SIZE=$(stat -c\%s "$FILE_NAME")
+          echo "📏 Size: $FILE_SIZE bytes"
+
+          if [ "$FILE_SIZE" -lt 104857600 ]; then
+            echo "❌ File too small (download failed or quota exceeded)"
+            exit 1
+          fi
+
+          echo "FILE_NAME=$FILE_NAME" >> $GITHUB_ENV
+          echo "FILE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
+          echo "✅ File ready: $FILE_NAME"
+
+      - name: Upload to Archive.org
+        env:
+          IA_ACCESS_KEY: ${{ secrets.IA_ACCESS_KEY }}
+          IA_SECRET_KEY: ${{ secrets.IA_SECRET_KEY }}
+        run: |
+          echo "🚀 Đang chuẩn bị tải lên Archive.org..."
+
+          if [ -z "${IA_ACCESS_KEY:-}" ] \vert{}\vert{} [ -z "${IA_SECRET_KEY:-}" ]; then
+            echo "❌ CẢNH BÁO: Không tìm thấy IA_ACCESS_KEY hoặc IA_SECRET_KEY trong Secrets!"
+            exit 1
+          fi
+
+          ITEM_ID="${{ github.event.inputs.ia_item_id }}"
+
+          ia configure --username="$IA_ACCESS_KEY" --password="$IA_SECRET_KEY"
+
+          echo "Bắt đầu upload $FILE_NAME lên item: $ITEM_ID..."
+          ia upload "$ITEM_ID" "$FILE_NAME" \
+            --metadata="mediatype:software" \
+            --metadata="collection:opensource_software" \
+            --retries=5
+
+          IA_LINK="https://archive.org/download/${ITEM_ID}/${FILE_NAME}"
+          echo "IA_LINK=$IA_LINK" >> $GITHUB_ENV
+          echo "✅ Upload hoàn tất: $IA_LINK"
+
+      - name: Workflow Summary & Notification
+        if: always()
+        run: |
+          echo "=========================================="
+          echo "             WORKFLOW REPORT              "
+          echo "=========================================="
+          
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "TRẠNG THÁI   : THÀNH CÔNG (SUCCESS)"
+            echo "LINK GỐC     : ${{ github.event.inputs.file_url }}"
+            echo "LINK MIRROR  : ${{ env.IA_LINK }}"
+            echo "TÊN FILE     : ${{ env.FILE_NAME }}"
+            echo "DUNG LƯỢNG   : ${{ env.FILE_SIZE }} bytes"
+            echo "ITEM ID      : ${{ github.event.inputs.ia_item_id }}"
+            echo "=========================================="
+
+            # Hiển thị trực tiếp trên trang tóm tắt của GitHub Run
+            {
+              echo "### ✅ ROM Mirror Completed Successfully"
+              echo ""
+              echo "- **Link gốc (Input):** [${{ github.event.inputs.file_url }}](${{ github.event.inputs.file_url }})"
+              echo "- **Link Mirror (Archive.org):** [${{ env.IA_LINK }}](${{ env.IA_LINK }})"
+              echo "- **File Name:** \`${{ env.FILE_NAME }}\`"
+              echo "- **File Size:** \`${{ env.FILE_SIZE }} bytes\`"
+              echo "- **Item ID:** \`${{ github.event.inputs.ia_item_id }}\`"
+            } >> $GITHUB_STEP_SUMMARY
+          else
+            echo "TRẠNG THÁI   : THẤT BẠI (FAILED)"
+            echo "LINK GỐC     : ${{ github.event.inputs.file_url }}"
+            echo "ITEM ID      : ${{ github.event.inputs.ia_item_id }}"
+            echo "=========================================="
+
+            {
+              echo "### ❌ ROM Mirror Failed"
+              echo ""
+              echo "- **Link gốc (Input):** [${{ github.event.inputs.file_url }}](${{ github.event.inputs.file_url }})"
+              echo "- **Item ID:** \`${{ github.event.inputs.ia_item_id }}\`"
+              echo "- *Tải file hoặc upload thất bại. Vui lòng kiểm tra lại log chi tiết ở các bước trên.*"
+            } >> $GITHUB_STEP_SUMMARY
+          fi
