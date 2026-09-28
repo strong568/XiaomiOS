@@ -86,13 +86,36 @@ jobs:
                    -s16 -x16 -j16 \
                    "$DIRECT_PIXEL"
 
-          # 3. Direct Link / AList / Cloud Drive
+          # 3. Direct Link / AList
           else
-            echo "🌐 Nhận diện nguồn: Direct Link"
-            # Trích xuất domain làm Referer
+            echo "🌐 Nhận diện nguồn: Direct Link / AList"
+            FINAL_URL="$RAW_URL"
+
+            # Nếu là link chia sẻ dạng web của AList (có chứa tên miền alist hoặc có path /d/)
+            if echo "$RAW_URL" | grep -qE "alist|\/d\/"; then
+              echo "🔍 Phát hiện link AList, đang truy vấn API để lấy link tải trực tiếp..."
+              HOST=$(echo "$RAW_URL" | awk -F[/:] '{print $1"://"$4}')
+              FILE_PATH=$(echo "$RAW_URL" | sed -e "s|$HOST||" -e 's|^/d/|/|' -e 's|\?.*$||')
+
+              # Gọi API của AList để lấy URL tải thực và header đi kèm
+              DOWNLOAD_DATA=$(curl -s -X POST "${HOST}/api/fs/get" \
+                -H "Content-Type: application/json" \
+                -d "{\"path\":\"$FILE_PATH\"}")
+
+              REAL_URL=$(echo "$DOWNLOAD_DATA" | grep -oP '"raw_url":\s*"\K[^"]+' | sed 's/\\u0026/\&/g')
+
+              if [ -n "$REAL_URL" ] && [ "$REAL_URL" != "null" ]; then
+                echo "✅ Lấy raw_url thành công qua API!"
+                FINAL_URL="$REAL_URL"
+              elif echo "$RAW_URL" | grep -qv "/d/"; then
+                # Nếu không lấy được qua API, chuyển sang link stream /d/
+                FINAL_URL="${HOST}/d${FILE_PATH}"
+              fi
+            fi
+
+            echo "Bắt đầu tải từ URL: $FINAL_URL"
             REFERER_URL=$(echo "$RAW_URL" | awk -F[/:] '{print $1"://"$4}')
 
-            # Dùng aria2 kèm Header Referer + User-Agent chống 403 Forbidden
             aria2c --header="User-Agent: $USER_AGENT" \
                    --header="Referer: $REFERER_URL/" \
                    --check-certificate=false \
@@ -102,12 +125,12 @@ jobs:
                    --max-connection-per-server=8 \
                    --split=8 \
                    --min-split-size=5M \
-                   "$RAW_URL" || \
-            wget -c --progress=bar:force:noscroll \
-                 --user-agent="$USER_AGENT" \
-                 --header="Referer: $REFERER_URL/" \
-                 --content-disposition "$RAW_URL"
+                   "$FINAL_URL" || \
+            curl -L -A "$USER_AGENT" \
+                 -e "$REFERER_URL/" \
+                 -O -J "$FINAL_URL"
           fi
+
 
           echo "📂 Danh sách file sau khi tải:"
           ls -lh
