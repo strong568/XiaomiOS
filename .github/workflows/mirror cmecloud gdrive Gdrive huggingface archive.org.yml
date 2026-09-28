@@ -19,10 +19,15 @@ jobs:
     steps:
       - name: Install dependencies
         run: |
-          sudo apt update
-          sudo apt install -y python3-pip aria2 wget curl
-          curl https://rclone.org/install.sh | sudo bash
-          pip3 install --no-cache-dir gdown internetarchive huggingface_hub
+          # 1. Cài rclone trực tiếp dạng binary (không dùng script để tránh kích hoạt cập nhật mandb gây treo runner)
+          curl -fsSL https://downloads.rclone.org/rclone-current-linux-amd64.zip -o rclone.zip
+          unzip -q -j rclone.zip "*/rclone" -d /usr/local/bin/
+          rm -f rclone.zip
+          chmod +x /usr/local/bin/rclone
+
+          # 2. Cài các gói Python với cờ vượt rào PEP 668 trên Ubuntu 24.04
+          pip3 install --no-cache-dir --break-system-packages gdown internetarchive huggingface_hub
+
 
       - name: Download file (Multi-host support)
         run: |
