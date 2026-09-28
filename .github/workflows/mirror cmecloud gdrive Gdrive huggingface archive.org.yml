@@ -214,24 +214,36 @@ jobs:
         run: |
           echo "🚀 Đang chuẩn bị tải lên Archive.org..."
 
-          if [ -z "${IA_ACCESS_KEY}" ] \vert{}\vert{} [ -z "${IA_SECRET_KEY}" ]; then
+          if [ -z "${IA_ACCESS_KEY}" ] || [ -z "${IA_SECRET_KEY}" ]; then
             echo "⚠️ CẢNH BÁO: Không tìm thấy IA_ACCESS_KEY hoặc IA_SECRET_KEY trong Secrets, bỏ qua bước này!"
           else
-            ITEM_ID="${{ github.event.inputs.ia_item_id }}"
+            # Nếu người dùng để mặc định là 'mirror-cloud', tự động thêm hậu tố để tránh trùng item bị khóa
+            INPUT_ID="${{ github.event.inputs.ia_item_id }}"
+            if [ "$INPUT_ID" == "mirror-cloud" ]; then
+              ITEM_ID="mirror-cloud-$(date +%Y%m%d%H%M%S)"
+            else
+              ITEM_ID="$INPUT_ID"
+            fi
 
             mkdir -p ~/.config
             printf "[s3]\naccess = %s\nsecret = %s\n" "${IA_ACCESS_KEY}" "${IA_SECRET_KEY}" > ~/.config/ia.ini
 
-            echo "Bắt đầu upload $FILE_NAME lên item: $ITEM_ID..."
-            ia upload "$ITEM_ID" "$FILE_NAME" \
-              --metadata="mediatype:software" \
-              --metadata="collection:opensource_software" \
-              --retries=5
-
             DOWNLOAD_URL="https://archive.org/download/${ITEM_ID}/${FILE_NAME}"
-            echo "IA_LINK=${DOWNLOAD_URL}" >> $GITHUB_ENV
-            echo "✅ Upload Archive.org hoàn tất: ${DOWNLOAD_URL}"
+            echo "Bắt đầu upload $FILE_NAME lên item: $ITEM_ID..."
+
+            # Bật cờ x-archive-queue-derive:0 để Archive.org không quét/mở file nén gây lỗi
+            if ia upload "$ITEM_ID" "$FILE_NAME" \
+                --metadata="mediatype:software" \
+                --metadata="collection:opensource_software" \
+                --header="x-archive-queue-derive:0" \
+                --retries=3; then
+              echo "IA_LINK=${DOWNLOAD_URL}" >> $GITHUB_ENV
+              echo "✅ Upload Archive.org hoàn tất: ${DOWNLOAD_URL}"
+            else
+              echo "❌ Upload lên Archive.org thất bại!"
+            fi
           fi
+
 
       - name: Workflow Summary & Notification
         if: always()
