@@ -68,7 +68,6 @@ jobs:
 
           if [ "$TARGET_KIND" = "FILE" ]; then
             DL_PAGE=$(curl -sL "https://drive.usercontent.google.com/download?id=${TARGET_ID}&export=download")
-            
             INPUT_SIZE=$(echo "$DL_PAGE" | grep -oP '\([0-9.,]+\s*[KMGTP]?i?B?\)' | tr -d '()' | head -n 1 || true)
 
             PAGE_TITLE=$(curl -sL "https://drive.google.com/file/d/${TARGET_ID}/view" | grep -oP '(?<=<meta property="og:title" content=").*?(?=")' | head -n 1 || true)
@@ -105,20 +104,11 @@ jobs:
               METHOD_USED="Server-Side Direct (Folder)"
             fi
           else
-            # Thực hiện copyid trực tiếp. Nếu rclone copyid đưa vào root, script sẽ tự động move vào thư mục Mirror-Cloud
-            rclone backend copyid gdrive: "$TARGET_ID" > copy.log 2>&1 || true
+            # Cú pháp chuẩn của rclone: backend copyid <remote:> <source_id> <dest_path_with_filename>
+            rclone backend copyid gdrive: "$TARGET_ID" "${DEST}/${INPUT_NAME}" > copy.log 2>&1 || true
             cat copy.log
 
-            # Nếu copy thành công vào Root, di chuyển ngay vào thư mục đích ${DEST}
             if [ -s copy.log ] && ! grep -qiE "failed|error" copy.log; then
-              NEW_FILE_ID=$(grep -oP '[a-zA-Z0-9_-]{20,}' copy.log | tail -n 1 || true)
-              if [ -n "$NEW_FILE_ID" ]; then
-                # Đổi tên và di chuyển chuẩn vào folder đích
-                rclone moveto "gdrive:${INPUT_NAME}" "gdrive:${DEST}/${INPUT_NAME}" 2>/dev/null || \
-                rclone moveto "gdrive,root_folder_id=${NEW_FILE_ID}:" "gdrive:${DEST}/${INPUT_NAME}" 2>/dev/null || true
-              else
-                rclone moveto "gdrive:${INPUT_NAME}" "gdrive:${DEST}/${INPUT_NAME}" 2>/dev/null || true
-              fi
               COPIED_SUCCESS=1
               METHOD_USED="Server-Side Direct (File)"
             fi
@@ -139,7 +129,6 @@ jobs:
               COOKIE_ARGS=(--cookies ../cookies_auth.txt)
             fi
 
-            # Bỏ cờ --fuzzy gây lỗi crash gdown
             if [ "$TARGET_KIND" = "FOLDER" ]; then
               gdown --folder "https://drive.google.com/drive/folders/${TARGET_ID}" "${COOKIE_ARGS[@]}" || true
             else
