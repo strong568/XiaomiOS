@@ -88,8 +88,16 @@ jobs:
           echo "📄 Tên nguồn phát hiện: $INPUT_NAME"
           echo "📦 Dung lượng nguồn: $INPUT_SIZE"
 
-          # 3. Tạo thư mục đích
+          # 3. Tạo thư mục đích và lấy chuẩn ID của thư mục đó
           rclone mkdir "gdrive:${DEST}"
+          DEST_FOLDER_ID=$(rclone lsf "gdrive:" --dirs-only --format "i" --filter "+ /${DEST}/" | tr -d ' \n\r/')
+          
+          # Nếu lsf không trả ID, fallback lấy qua lsjson
+          if [ -z "$DEST_FOLDER_ID" ]; then
+            DEST_FOLDER_ID=$(rclone lsjson "gdrive:" --dirs-only | jq -r ".[] | select(.Path==\"${DEST}\") | .ID" | tr -d ' \n\r')
+          fi
+
+          echo "📂 ID chính xác của thư mục ${DEST}: ${DEST_FOLDER_ID}"
 
           COPIED_SUCCESS=0
 
@@ -98,21 +106,30 @@ jobs:
             if rclone copy "gdrive,root_folder_id=${TARGET_ID}:" "gdrive:${DEST}" \
                 --drive-server-side-across-configs \
                 --drive-acknowledge-abuse \
-                --progress \
                 --transfers 8; then
               COPIED_SUCCESS=1
               METHOD_USED="Server-Side Direct (Folder)"
             fi
           else
-            # Cú pháp chuẩn của rclone: backend copyid <remote:> <source_id> <dest_path_with_filename>
-            rclone backend copyid gdrive: "$TARGET_ID" "${DEST}/${INPUT_NAME}" > copy.log 2>&1 || true
+            # Chạy copyid bằng cặp 2 ID chuẩn xác: ID_NGUỒN và ID_THƯ_MỤC_ĐÍCH
+            if [ -n "$DEST_FOLDER_ID" ]; then
+              rclone backend copyid gdrive: "$TARGET_ID" "$DEST_FOLDER_ID" > copy.log 2>&1 || true
+            else
+              # Nếu không lấy được ID thư mục, copy về root rồi move
+              rclone backend copyid gdrive: "$TARGET_ID" > copy.log 2>&1 || true
+            fi
             cat copy.log
 
-            if [ -s copy.log ] && ! grep -qiE "failed|error" copy.log; then
+            # Kiểm tra nếu copyid in ra ID file mới thành công
+            COPIED_FILE_ID=$(grep -oP '[a-zA-Z0-9_-]{25,}' copy.log | tail -n 1 || true)
+            if [ -n "$COPIED_FILE_ID" ]; then
               COPIED_SUCCESS=1
               METHOD_USED="Server-Side Direct (File)"
+              # Đảm bảo file nằm đúng trong DEST nếu lỡ nằm ở Root
+              rclone moveto "gdrive,root_folder_id=${COPIED_FILE_ID}:" "gdrive:${DEST}/${INPUT_NAME}" 2>/dev/null || true
             fi
           fi
+
 
           # 4. Fallback tải về máy ảo nếu Server-Side không được
           if [ "$COPIED_SUCCESS" -eq 1 ]; then
