@@ -76,28 +76,24 @@ jobs:
 
             # Link là Folder
             if echo "$RAW_URL" | grep -qE "folders\/|folder"; then
-              FOLDER_ID=$(echo "$CLEAN_URL" | grep -oP 'folders\/\K[a-zA-Z0-9_-]+' || echo "$RAW_URL" | grep -oP 'id=\K[a-zA-Z0-9_-]+' | head -n 1)
+              FOLDER_ID=$(echo "$CLEAN_URL" \vert{} grep -oP 'folders\/\K[a-zA-Z0-9_-]+' \vert{}\vert{} echo "$RAW_URL" | grep -oP 'id=\K[a-zA-Z0-9_-]+' | head -n 1)
               echo "📂 ID Thư mục cần tải: $FOLDER_ID"
-              
+
               DOWNLOAD_SUCCESS=0
 
-              # Cách 1: Dùng rclone với remote tạm thời trỏ thẳng vào root_folder_id (KHÔNG dùng --drive-shared-with-me)
-              if [ "$HAS_RCLONE" -eq 1 ]; then
-                echo "🚀 Tải folder qua Rclone với phạm vi cô lập..."
-                # Tạo một remote ảo tạm thời khóa chặt đúng folder ID đó
-                if rclone copy ":drive,root_folder_id=${FOLDER_ID}:" ./target_payload \
-                    --progress --transfers 4 --drive-acknowledge-abuse; then
-                  # Kiểm tra nếu có file tải về thì thành công
-                  if [ -n "$(ls -A ./target_payload 2>/dev/null)" ]; then
-                    DOWNLOAD_SUCCESS=1
-                  fi
+              # Ưu tiên dùng gdown để lấy chính xác toàn bộ file trong thư mục công khai mà không kéo nhầm file tài khoản
+              echo "⚡ Đang tải chính xác thư mục bằng gdown..."
+              if gdown --folder "https://drive.google.com/drive/folders/${FOLDER_ID}" -O ./target_payload $COOKIE_OPT --remaining-ok; then
+                if [ -n "$(ls -A ./target_payload 2>/dev/null)" ]; then
+                  DOWNLOAD_SUCCESS=1
                 fi
               fi
 
-              # Cách 2: Fallback sang gdown nếu Rclone không lấy được
-              if [ "$DOWNLOAD_SUCCESS" -eq 0 ]; then
-                echo "⚡ Chuyển sang tải folder bằng gdown..."
-                gdown --folder "https://drive.google.com/drive/folders/${FOLDER_ID}" -O ./target_payload $COOKIE_OPT --remaining-ok
+              # Fallback qua Rclone nếu gdown bị giới hạn
+              if [ "$DOWNLOAD_SUCCESS" -eq 0 ] && [ "$HAS_RCLONE" -eq 1 ]; then
+                echo "🚀 Thử tải lại qua Rclone cô lập..."
+                rclone copy ":drive,root_folder_id=${FOLDER_ID}:" ./target_payload \
+                  --progress --transfers 4 --drive-acknowledge-abuse || true
               fi
 
             # Link là File đơn lẻ
@@ -115,7 +111,6 @@ jobs:
                      "https://drive.google.com/uc?export=download&id=${FILE_ID}"
               cd ..
             fi
-
 
           # 2. Pixeldrain
           elif echo "$RAW_URL" | grep -q "pixeldrain.com"; then
