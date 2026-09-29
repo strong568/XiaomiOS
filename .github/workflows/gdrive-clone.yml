@@ -88,21 +88,12 @@ jobs:
           echo "📄 Tên nguồn phát hiện: $INPUT_NAME"
           echo "📦 Dung lượng nguồn: $INPUT_SIZE"
 
-          # 3. Tạo thư mục đích và lấy ID thư mục đích
-          rclone mkdir "gdrive:${DEST}"
-          DEST_FOLDER_ID=$(rclone backend fileid gdrive: "${DEST}" 2>/dev/null | tr -d ' \n\r')
-          if [ -z "$DEST_FOLDER_ID" ] \vert{}\vert{} [ "$DEST_FOLDER_ID" = "Root" ]; then
-            DEST_FOLDER_ID=$(rclone lsjson "gdrive:" --dirs-only 2>/dev/null | jq -r ".[] | select(.Path==\"${DEST}\") | .ID" | head -n 1 | tr -d ' \n\r')
-          fi
-
-          echo "📂 Folder ID đích (${DEST}):${DEST_FOLDER_ID:-'Root'}"
-
           COPIED_SUCCESS=0
-          COPIED_FILE_ID=""
 
-          # 4. THỰC HIỆN SERVER-SIDE
-          echo "⚡ [Tầng 1] Đang nhân bản Server-Side tốc độ cao..."
+          # 3. THỰC HIỆN SERVER-SIDE COPY RA ROOT ĐẶT TÊN THEO DEST
+          echo "⚡ [Cách 1] Đang thử nhân bản trực tiếp bằng Server-Side..."
           if [ "$TARGET_KIND" = "FOLDER" ]; then
+            rclone mkdir "gdrive:${DEST}"
             if rclone copy "gdrive,root_folder_id=${TARGET_ID}:" "gdrive:${DEST}" \
                 --drive-server-side-across-configs \
                 --drive-acknowledge-abuse \
@@ -112,64 +103,19 @@ jobs:
               METHOD_USED="Server-Side Direct (Folder)"
             fi
           else
-            # Thử qua Google Drive REST API trực tiếp
-            ACCESS_TOKEN=$(rclone backend token gdrive: 2>/dev/null | jq -r '.access_token // empty')
-            if [ -n "$ACCESS_TOKEN" ]; then
-              PAYLOAD="{}"
-              if [ -n "$DEST_FOLDER_ID" ] && [ "$DEST_FOLDER_ID" != "Root" ]; then
-                PAYLOAD="{\"parents\": [\"${DEST_FOLDER_ID}\"]}"
-              fi
-              
-              API_RESP=$(curl -s -X POST \
-                -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-                -H "Content-Type: application/json" \
-                -d "$PAYLOAD" \
-                "https://www.googleapis.com/drive/v3/files/${TARGET_ID}/copy?supportsAllDrives=true" || true)
-              
-              COPIED_FILE_ID=$(echo "$API_RESP" | jq -r '.id // empty' 2>/dev/null || true)
-              if [ -n "$COPIED_FILE_ID" ]; then
-                COPIED_SUCCESS=1
-                METHOD_USED="Server-Side Instant Copy (Google API v3)"
-                echo "🎉 Nhân bản thành công trong 1s với ID: $COPIED_FILE_ID"
-              fi
-            fi
+            # Lệnh copyid trực tiếp đẩy ra Root thành file tên Mirror-Cloud
+            rclone backend copyid gdrive: "$TARGET_ID" "gdrive:${DEST}" > copy.log 2>&1 || true
+            cat copy.log
 
-            # Nếu tầng 1 chưa được, thử tầng 2 bằng rclone backend copyid
-            if [ "$COPIED_SUCCESS" -ne 1 ]; then
-              echo "⚡ [Tầng 2] Chạy qua rclone backend copyid..."
-              OPT_ARGS=()
-              if [ -n "$DEST_FOLDER_ID" ] && [ "$DEST_FOLDER_ID" != "Root" ]; then
-                OPT_ARGS=("-o" "dst-dir-id=${DEST_FOLDER_ID}")
-              fi
-
-              rclone backend copyid gdrive: "$TARGET_ID" "${OPT_ARGS[@]}" > copy.log 2>&1 || true
-              cat copy.log
-
-              COPIED_FILE_ID=$(grep -oP '[a-zA-Z0-9_-]{25,}' copy.log | tail -n 1 || true)
-              if [ -n "$COPIED_FILE_ID" ]; then
-                COPIED_SUCCESS=1
-                METHOD_USED="Server-Side Direct (rclone copyid)"
-              fi
-            fi
-
-            # NẾU COPY THÀNH CÔNG: Đảm bảo file được đưa vào đúng DEST (di chuyển nếu file đang ở Root)
-            if [ "$COPIED_SUCCESS" -eq 1 ] && [ -n "$COPIED_FILE_ID" ]; then
-              echo "🚚 Đang đảm bảo file nằm đúng thư mục ${DEST}..."
-              NEW_NAME=$(rclone backend metadata gdrive: "$COPIED_FILE_ID" 2>/dev/null | jq -r '.name // empty')
-              [ -z "$NEW_NAME" ] && NEW_NAME="$INPUT_NAME"
-
-              # Kiểm tra nếu file chưa có trong DEST thì move vào
-              EXISTS_IN_DEST=$(rclone lsjson "gdrive:${DEST}" 2>/dev/null \vert{} jq -r ".[] \vert{} select(.ID == \"${COPIED_FILE_ID}\") | .ID" || true)
-              if [ -z "$EXISTS_IN_DEST" ]; then
-                rclone moveto "gdrive:${NEW_NAME}" "gdrive:${DEST}/${NEW_NAME}" 2>/dev/null || \
-                rclone backend moveid gdrive: "$COPIED_FILE_ID" "$DEST_FOLDER_ID" 2>/dev/null || true
-              fi
+            if [ -s copy.log ] && ! grep -qiE "failed|error" copy.log; then
+              COPIED_SUCCESS=1
+              METHOD_USED="Server-Side Direct (File)"
             fi
           fi
 
-          # 5. Fallback tải về máy ảo nếu Server-Side không thể xử lý
+          # 4. Fallback tải về máy ảo nếu Server-Side không được
           if [ "$COPIED_SUCCESS" -eq 1 ]; then
-            echo "🎉 Server-Side Copy thành công vào ${DEST}!"
+            echo "🎉 Server-Side Copy thành công!"
           else
             echo "⚠️ Server-Side không khả dụng, chuyển sang tải gdown..."
             METHOD_USED="gdown Download & Upload"
@@ -196,26 +142,25 @@ jobs:
               exit 1
             fi
 
-            echo "🚀 Đang upload file vào Google Drive (${DEST})..."
-            rclone copy ./temp_transfer "gdrive:${DEST}" --progress --drive-chunk-size 64M --transfers 4
+            echo "🚀 Đang upload file vào Google Drive..."
+            rclone copy ./temp_transfer "gdrive:" --progress --drive-chunk-size 64M --transfers 4
             rm -rf ./temp_transfer
           fi
 
-          # 6. Xuất báo cáo tóm tắt
+          # 5. Xuất báo cáo tóm tắt (quét file ngoài root)
           set +e
-          DEST_LINK=$(rclone link "gdrive:${DEST}" 2>/dev/null)
-          rclone lsjson "gdrive:${DEST}" | jq '[.[] | select(.Name != "cookies.txt" and .Name != "download")]' > dest_files.json 2>/dev/null
+          rclone lsjson "gdrive:" --max-depth 1 | jq '[.[] | select(.IsDir == false and .Name != "cookies.txt" and .Name != "download")]' > root_files.json 2>/dev/null
 
           OUTPUT_FILE="summary_output.md"
           > "$OUTPUT_FILE"
 
-          ITEMS_COUNT=$(jq 'length' dest_files.json 2>/dev/null || echo 0)
+          ITEMS_COUNT=$(jq 'length' root_files.json 2>/dev/null || echo 0)
           if [ "$ITEMS_COUNT" -gt 0 ]; then
             for i in $(seq 0$((ITEMS_COUNT - 1))); do
-              FNAME=$(jq -r ".[$i].Name" dest_files.json)
-              FSIZE_B=$(jq -r ".[$i].Size" dest_files.json)
+              FNAME=$(jq -r ".[$i].Name" root_files.json)
+              FSIZE_B=$(jq -r ".[$i].Size" root_files.json)
               FSIZE=$(numfmt --to=iec-i --suffix=B --format="\%.2f" "$FSIZE_B" 2>/dev/null)
-              FID=$(rclone backend fileid gdrive: "${DEST}/${FNAME}" 2>/dev/null | tr -d ' \n\r')
+              FID=$(rclone backend fileid gdrive: "${FNAME}" 2>/dev/null | tr -d ' \n\r')
               if [ -n "$FID" ]; then
                 echo "- 📄 **${FNAME}** (${FSIZE}) - [👉 Mở file trên Drive](https://drive.google.com/file/d/${FID}/view?usp=sharing)" >> "$OUTPUT_FILE"
               else
@@ -226,7 +171,6 @@ jobs:
 
           echo "INPUT_NAME=${INPUT_NAME}" >> $GITHUB_ENV
           echo "INPUT_SIZE=${INPUT_SIZE}" >> $GITHUB_ENV
-          echo "DEST_LINK=${DEST_LINK}" >> $GITHUB_ENV
           echo "METHOD_USED=${METHOD_USED}" >> $GITHUB_ENV
           set -e
 
@@ -244,12 +188,9 @@ jobs:
               echo "- **Phương thức áp dụng:** \`${METHOD_USED}\`"
               echo ""
               echo "#### 📤 Đích đến (Output):"
-              echo "- **Thư mục lưu trữ:** \`${{ github.event.inputs.dest_folder }}\`"
-              if [ -n "${DEST_LINK:-}" ]; then
-                echo "- **Link thư mục:** [Mở thư mục đích](${DEST_LINK})"
-              fi
+              echo "- **Vị trí lưu:** Thư mục gốc (Root / My Drive) với tên \`${{ github.event.inputs.dest_folder }}\`"
               echo ""
-              echo "##### 📄 Danh sách file trong thư mục đích:"
+              echo "##### 📄 Danh sách file ngoài thư mục gốc:"
               cat summary_output.md 2>/dev/null || echo "Không có file nào."
             } >> $GITHUB_STEP_SUMMARY
           else
