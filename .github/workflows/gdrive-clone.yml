@@ -69,10 +69,8 @@ jobs:
           if [ "$TARGET_KIND" = "FILE" ]; then
             DL_PAGE=$(curl -sL "https://drive.usercontent.google.com/download?id=${TARGET_ID}&export=download")
             
-            # Lấy dung lượng file trong ngoặc đơn
             INPUT_SIZE=$(echo "$DL_PAGE" | grep -oP '\([0-9.,]+\s*[KMGTP]?i?B?\)' | tr -d '()' | head -n 1 || true)
 
-            # Lấy tên file từ og:title
             PAGE_TITLE=$(curl -sL "https://drive.google.com/file/d/${TARGET_ID}/view" | grep -oP '(?<=<meta property="og:title" content=").*?(?=")' | head -n 1 || true)
             if [ -n "$PAGE_TITLE" ]; then
               INPUT_NAME="$PAGE_TITLE"
@@ -91,33 +89,14 @@ jobs:
           echo "📄 Tên nguồn phát hiện: $INPUT_NAME"
           echo "📦 Dung lượng nguồn: $INPUT_SIZE"
 
-          # 3. LẤY CHÍNH XÁC ID CỦA THƯ MỤC ĐÍCH (MIRROR-CLOUD)
+          # 3. Tạo thư mục đích
           rclone mkdir "gdrive:${DEST}"
-          
-          # Đẩy 1 file tạm để đọc parent ID chuẩn của thư mục đích
-          echo "mark" > .marker
-          rclone copy .marker "gdrive:${DEST}"
-          DEST_ID=$(rclone backend fileid gdrive: "${DEST}/.marker" 2>/dev/null | tr -d ' \n\r')
-          if [ -n "$DEST_ID" ]; then
-            # Đọc parent ID từ metadata của marker
-            DEST_FOLDER_ID=$(rclone backend metadata gdrive: "$DEST_ID" 2>/dev/null | jq -r '.parents[0] // empty' || true)
-          fi
-          rclone deletefile "gdrive:${DEST}/.marker" 2>/dev/null || true
-          rm -f .marker
-
-          echo "📂 Folder ID đích (${DEST}):${DEST_FOLDER_ID:-'Không lấy được ID'}"
 
           COPIED_SUCCESS=0
 
           echo "⚡ [Cách 1] Đang thử nhân bản trực tiếp bằng Server-Side..."
           if [ "$TARGET_KIND" = "FOLDER" ]; then
-            if [ -n "$DEST_FOLDER_ID" ]; then
-              TARGET_REMOTE="gdrive,root_folder_id=${DEST_FOLDER_ID}:"
-            else
-              TARGET_REMOTE="gdrive:${DEST}"
-            fi
-
-            if rclone copy "gdrive,root_folder_id=${TARGET_ID}:" "$TARGET_REMOTE" \
+            if rclone copy "gdrive,root_folder_id=${TARGET_ID}:" "gdrive:${DEST}" \
                 --drive-server-side-across-configs \
                 --drive-acknowledge-abuse \
                 --progress \
@@ -126,15 +105,20 @@ jobs:
               METHOD_USED="Server-Side Direct (Folder)"
             fi
           else
-            # Với File: bắt buộc copy vào Folder ID đích bằng copyid
-            if [ -n "$DEST_FOLDER_ID" ]; then
-              rclone backend copyid gdrive: "$TARGET_ID" "$DEST_FOLDER_ID" > copy.log 2>&1 || true
-            else
-              rclone backend copyid gdrive: "$TARGET_ID" -o "dst-dir-id=${DEST}" > copy.log 2>&1 || true
-            fi
-
+            # Thực hiện copyid trực tiếp. Nếu rclone copyid đưa vào root, script sẽ tự động move vào thư mục Mirror-Cloud
+            rclone backend copyid gdrive: "$TARGET_ID" > copy.log 2>&1 || true
             cat copy.log
-            if [ -s copy.log ] && ! grep -qiE "failed|error|need an even" copy.log; then
+
+            # Nếu copy thành công vào Root, di chuyển ngay vào thư mục đích ${DEST}
+            if [ -s copy.log ] && ! grep -qiE "failed|error" copy.log; then
+              NEW_FILE_ID=$(grep -oP '[a-zA-Z0-9_-]{20,}' copy.log | tail -n 1 || true)
+              if [ -n "$NEW_FILE_ID" ]; then
+                # Đổi tên và di chuyển chuẩn vào folder đích
+                rclone moveto "gdrive:${INPUT_NAME}" "gdrive:${DEST}/${INPUT_NAME}" 2>/dev/null || \
+                rclone moveto "gdrive,root_folder_id=${NEW_FILE_ID}:" "gdrive:${DEST}/${INPUT_NAME}" 2>/dev/null || true
+              else
+                rclone moveto "gdrive:${INPUT_NAME}" "gdrive:${DEST}/${INPUT_NAME}" 2>/dev/null || true
+              fi
               COPIED_SUCCESS=1
               METHOD_USED="Server-Side Direct (File)"
             fi
@@ -155,10 +139,11 @@ jobs:
               COOKIE_ARGS=(--cookies ../cookies_auth.txt)
             fi
 
+            # Bỏ cờ --fuzzy gây lỗi crash gdown
             if [ "$TARGET_KIND" = "FOLDER" ]; then
               gdown --folder "https://drive.google.com/drive/folders/${TARGET_ID}" "${COOKIE_ARGS[@]}" || true
             else
-              gdown --fuzzy "https://drive.google.com/uc?id=${TARGET_ID}" "${COOKIE_ARGS[@]}" || true
+              gdown "https://drive.google.com/uc?id=${TARGET_ID}" -O "${INPUT_NAME}" "${COOKIE_ARGS[@]}" || true
             fi
             cd ..
 
@@ -177,7 +162,7 @@ jobs:
           # 5. Xuất báo cáo tóm tắt
           set +e
           DEST_LINK=$(rclone link "gdrive:${DEST}" 2>/dev/null)
-          rclone lsjson "gdrive:${DEST}" | jq '[.[] | select(.Name != "cookies.txt" and .Name != "download" and .Name != ".marker")]' > dest_files.json 2>/dev/null
+          rclone lsjson "gdrive:${DEST}" | jq '[.[] | select(.Name != "cookies.txt" and .Name != "download")]' > dest_files.json 2>/dev/null
 
           OUTPUT_FILE="summary_output.md"
           > "$OUTPUT_FILE"
