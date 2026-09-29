@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       file_url:
-        description: "Google Drive / Pixeldrain / Direct download link"
+        description: "Google Drive (File/Folder) / Pixeldrain / Direct download link"
         required: true
 
       ia_item_id:
@@ -20,56 +20,86 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y python3-pip aria2 wget curl
+          sudo apt install -y python3-pip aria2 wget curl zip unzip
           curl https://rclone.org/install.sh | sudo bash
           pip3 install --no-cache-dir gdown internetarchive huggingface_hub
 
-      - name: Download file (Multi-host support)
+      - name: Download file or folder (Multi-host support)
+        env:
+          GDRIVE_COOKIES: ${{ secrets.GDRIVE_COOKIES }}
+          RCLONE_CONFIG_DATA: ${{ secrets.RCLONE_CONFIG }}
         run: |
-          echo "🔽 Bắt đầu tải file..."
-
+          echo "🔽 Bắt đầu xử lý tải nguồn..."
           RAW_URL="${{ github.event.inputs.file_url }}"
           echo "Link nguồn: $RAW_URL"
           USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
-          # 1. Google Drive (Hỗ trợ drive.google.com và drive.usercontent.google.com)
+          # 0. Thiết lập Rclone config và Cookies nếu có
+          if [ -n "${RCLONE_CONFIG_DATA:-}" ]; then
+            mkdir -p ~/.config/rclone
+            echo "$RCLONE_CONFIG_DATA" > ~/.config/rclone/rclone.conf
+          fi
+
+          COOKIE_OPT=""
+          if [ -n "${GDRIVE_COOKIES:-}" ]; then
+            echo "🔑 Đã nạp GDRIVE_COOKIES để vượt giới hạn tải..."
+            echo "$GDRIVE_COOKIES" > cookies.txt
+            COOKIE_OPT="--cookies cookies.txt"
+          fi
+
+          # 1. Google Drive (File đơn lẻ hoặc Folder)
           if echo "$RAW_URL" | grep -qE "drive\.google\.com|drive\.usercontent\.google\.com"; then
             echo "📦 Nhận diện nguồn: Google Drive"
 
-            FILE_ID=$(echo "$RAW_URL" | grep -oP '(id=|\/d\/)\K[a-zA-Z0-9_-]+' | head -n 1)
+            # Trường hợp 1A: Link là Thư mục (Folder)
+            if echo "$RAW_URL" | grep -qE "folders\/|id=[a-zA-Z0-9_-]+&.*folder"; then
+              FOLDER_ID=$(echo "$RAW_URL" \vert{} grep -oP 'folders\/\K[a-zA-Z0-9_-]+' \vert{}\vert{} echo "$RAW_URL" | grep -oP 'id=\K[a-zA-Z0-9_-]+')
+              echo "📂 Phát hiện Thư mục (Folder ID: $FOLDER_ID)"
 
-            if [ -n "$FILE_ID" ]; then
-              echo "Trích xuất thành công File ID: $FILE_ID"
-              COOKIE_OPT=""
-              if [ -n "${GDRIVE_COOKIES:-}" ]; then
-                echo "🔑 Đã tìm thấy cookie Google Drive, kích hoạt vượt hạn ngạch tải..."
-                echo "$GDRIVE_COOKIES" > cookies.txt
-                COOKIE_OPT="--cookies cookies.txt"
-              fi
-            
-              gdown "https://drive.google.com/uc?id=${FILE_ID}" $COOKIE_OPT || \
-              aria2c --header="User-Agent: $USER_AGENT" \
-                     --check-certificate=false \
-                     --allow-overwrite=true \
-                     --auto-file-renaming=false \
-                     --content-disposition \
-                     -s16 -x16 -j16 \
-                     "$RAW_URL"
+              mkdir -p downloaded_folder
+              # Clone toàn bộ folder bằng Rclone thông qua public link ID
+              rclone copy "gdrive,root_folder_id=${FOLDER_ID}:" ./downloaded_folder \
+                --drive-shared-with-me=false \
+                --drive-server-side-across-configs \
+                --progress --transfers 8 || \
+              gdown --folder "https://drive.google.com/drive/folders/${FOLDER_ID}" -O ./downloaded_folder $COOKIE_OPT
+
+              # Đóng gói Folder thành zip để mirror lên HuggingFace / Archive.org
+              FILE_NAME="Drive_Folder_${FOLDER_ID}.zip"
+              echo "📦 Đang nén thư mục thành ${FILE_NAME}..."
+              zip -r -q "$FILE_NAME" ./downloaded_folder
+              rm -rf ./downloaded_folder
+
+            # Trường hợp 1B: Link là File đơn lẻ
             else
-              echo "⚠️ Không bóc tách được ID, thử tải trực tiếp URL..."
-              aria2c --header="User-Agent: $USER_AGENT" \
-                     --check-certificate=false \
-                     --allow-overwrite=true \
-                     --auto-file-renaming=false \
-                     --content-disposition \
-                     -s16 -x16 -j16 \
-                     "$RAW_URL"
+              FILE_ID=$(echo "$RAW_URL" | grep -oP '(id=|\/d\/)\K[a-zA-Z0-9_-]+' | head -n 1)
+              echo "📄 Trích xuất File ID: $FILE_ID"
+
+              # Thử copy trực tiếp bằng Rclone nếu đã cấu hình (vượt quota không tốn mạng)
+              COPIED_BY_RCLONE=0
+              if [ -f ~/.config/rclone/rclone.conf ]; then
+                echo "🚀 Thử clone trực tiếp file qua Rclone server-side..."
+                if rclone backend copyid gdrive: "$FILE_ID" "./" 2>/dev/null; then
+                  COPIED_BY_RCLONE=1
+                fi
+              fi
+
+              # Nếu chưa tải được qua Rclone copyid thì fallback gdown & aria2c
+              if [ "$COPIED_BY_RCLONE" -eq 0 ]; then
+                gdown "https://drive.google.com/uc?id=${FILE_ID}" $COOKIE_OPT || \
+                aria2c --header="User-Agent: $USER_AGENT" \
+                       --check-certificate=false \
+                       --allow-overwrite=true \
+                       --auto-file-renaming=false \
+                       --content-disposition \
+                       -s16 -x16 -j16 \
+                       "$RAW_URL"
+              fi
             fi
 
           # 2. Pixeldrain
           elif echo "$RAW_URL" | grep -q "pixeldrain.com"; then
             echo "📦 Nhận diện nguồn: Pixeldrain"
-
             PIXEL_ID=$(echo "$RAW_URL" | grep -oP '(u\/|file\/)\K[a-zA-Z0-9]+')
             if [ -z "$PIXEL_ID" ]; then
               echo "❌ Không trích xuất được Pixeldrain ID!"
@@ -95,7 +125,8 @@ jobs:
           echo "📂 Danh sách file sau khi tải:"
           ls -lh
 
-          FILE_NAME=$(ls -S | head -n 1)
+          # Lấy file thực tế lớn nhất, bỏ qua các file phụ (txt, yml)
+          FILE_NAME=$(ls -S | grep -vE '\.txt$\vert{}\.yml$' | head -n 1)
 
           if [ -z "$FILE_NAME" ]; then
             echo "❌ Không tìm thấy file hợp lệ sau khi tải!"
@@ -106,14 +137,13 @@ jobs:
           echo "📏 Dung lượng: $FILE_SIZE bytes"
 
           if [ "$FILE_SIZE" -lt 104857600 ]; then
-            echo "❌ File quá nhỏ (< 100MB), có thể link đã bị giới hạn hoặc tải lỗi."
+            echo "❌ File quá nhỏ (< 100MB), có thể link đã bị giới hạn quota hoặc tải file HTML báo lỗi."
             exit 1
           fi
 
-          echo "🎉 Đã hoàn thành 100% quá trình tải về máy chủ Runner!"
+          echo "🎉 Đã sẵn sàng file: $FILE_NAME"
           echo "FILE_NAME=$FILE_NAME" >> $GITHUB_ENV
           echo "FILE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
-          echo "✅ Sẵn sàng file: $FILE_NAME"
 
       - name: Upload to Google Drive (Mirror-Cloud)
         continue-on-error: true
@@ -134,7 +164,6 @@ jobs:
               --drive-chunk-size 64M \
               --transfers 4
 
-            # Lấy link chia sẻ công khai của file vừa upload
             GDRIVE_LINK=$(rclone link "gdrive:Mirror-Cloud/$FILE_NAME" 2>/dev/null || echo "")
             echo "GDRIVE_LINK=${GDRIVE_LINK}" >> $GITHUB_ENV
             echo "✅ Upload Google Drive hoàn tất! Link: ${GDRIVE_LINK}"
@@ -159,7 +188,7 @@ jobs:
             echo "HF_LINK=${HF_LINK}" >> $GITHUB_ENV
             echo "✅ Upload Hugging Face hoàn tất: ${HF_LINK}"
           fi
-          
+
       - name: Upload to Archive.org
         continue-on-error: true
         env:
@@ -168,10 +197,9 @@ jobs:
         run: |
           echo "🚀 Đang chuẩn bị tải lên Archive.org..."
 
-          if [ -z "${IA_ACCESS_KEY}" ] || [ -z "${IA_SECRET_KEY}" ]; then
+          if [ -z "${IA_ACCESS_KEY}" ] \vert{}\vert{} [ -z "${IA_SECRET_KEY}" ]; then
             echo "⚠️ CẢNH BÁO: Không tìm thấy IA_ACCESS_KEY hoặc IA_SECRET_KEY trong Secrets, bỏ qua bước này!"
           else
-            # Nếu người dùng để mặc định là 'mirror-cloud', tự động thêm hậu tố để tránh trùng item bị khóa
             INPUT_ID="${{ github.event.inputs.ia_item_id }}"
             if [ "$INPUT_ID" == "mirror-cloud" ]; then
               ITEM_ID="mirror-cloud-$(date +%Y%m%d%H%M%S)"
@@ -185,7 +213,6 @@ jobs:
             DOWNLOAD_URL="https://archive.org/download/${ITEM_ID}/${FILE_NAME}"
             echo "Bắt đầu upload $FILE_NAME lên item: $ITEM_ID..."
 
-            # Bật cờ x-archive-queue-derive:0 để Archive.org không quét/mở file nén gây lỗi
             if ia upload "$ITEM_ID" "$FILE_NAME" \
                 --metadata="mediatype:software" \
                 --metadata="collection:opensource_software" \
@@ -198,7 +225,6 @@ jobs:
             fi
           fi
 
-
       - name: Workflow Summary & Notification
         if: always()
         run: |
@@ -207,7 +233,7 @@ jobs:
           echo "=========================================="
           echo "             WORKFLOW REPORT              "
           echo "=========================================="
-          
+
           if [ "${{ job.status }}" == "success" ]; then
             echo "TRẠNG THÁI   : THÀNH CÔNG (SUCCESS)"
             echo "LINK GỐC     : ${{ github.event.inputs.file_url }}"
@@ -220,7 +246,7 @@ jobs:
             echo "=========================================="
 
             {
-              echo "### ✅ ROM Mirror Completed Successfully"
+              echo "### ✅ Mirror Completed Successfully"
               echo ""
               echo "- **Link gốc (Input):** [${{ github.event.inputs.file_url }}](${{ github.event.inputs.file_url }})"
               if [ -n "${GDRIVE_LINK:-}" ]; then
@@ -244,7 +270,7 @@ jobs:
             echo "=========================================="
 
             {
-              echo "### ❌ ROM Mirror Failed"
+              echo "### ❌ Mirror Failed"
               echo ""
               echo "- **Link gốc (Input):** [${{ github.event.inputs.file_url }}](${{ github.event.inputs.file_url }})"
               echo "- **Item ID:** \`$ITEM_ID\`"
