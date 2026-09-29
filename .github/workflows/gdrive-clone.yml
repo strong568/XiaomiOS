@@ -98,6 +98,7 @@ jobs:
           echo "📂 Folder ID đích (${DEST}):${DEST_FOLDER_ID:-'Root'}"
 
           COPIED_SUCCESS=0
+          COPIED_FILE_ID=""
 
           # 4. THỰC HIỆN SERVER-SIDE
           echo "⚡ [Tầng 1] Đang nhân bản Server-Side tốc độ cao..."
@@ -148,6 +149,20 @@ jobs:
               if [ -n "$COPIED_FILE_ID" ]; then
                 COPIED_SUCCESS=1
                 METHOD_USED="Server-Side Direct (rclone copyid)"
+              fi
+            fi
+
+            # NẾU COPY THÀNH CÔNG: Đảm bảo file được đưa vào đúng DEST (di chuyển nếu file đang ở Root)
+            if [ "$COPIED_SUCCESS" -eq 1 ] && [ -n "$COPIED_FILE_ID" ]; then
+              echo "🚚 Đang đảm bảo file nằm đúng thư mục ${DEST}..."
+              NEW_NAME=$(rclone backend metadata gdrive: "$COPIED_FILE_ID" 2>/dev/null | jq -r '.name // empty')
+              [ -z "$NEW_NAME" ] && NEW_NAME="$INPUT_NAME"
+
+              # Kiểm tra nếu file chưa có trong DEST thì move vào
+              EXISTS_IN_DEST=$(rclone lsjson "gdrive:${DEST}" 2>/dev/null \vert{} jq -r ".[] \vert{} select(.ID == \"${COPIED_FILE_ID}\") | .ID" || true)
+              if [ -z "$EXISTS_IN_DEST" ]; then
+                rclone moveto "gdrive:${NEW_NAME}" "gdrive:${DEST}/${NEW_NAME}" 2>/dev/null || \
+                rclone backend moveid gdrive: "$COPIED_FILE_ID" "$DEST_FOLDER_ID" 2>/dev/null || true
               fi
             fi
           fi
