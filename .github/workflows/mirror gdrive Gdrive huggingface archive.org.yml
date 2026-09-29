@@ -46,7 +46,8 @@ jobs:
           sudo apt update
           sudo apt install -y python3-pip aria2 wget curl
           curl https://rclone.org/install.sh | sudo bash
-          pip3 install --no-cache-dir gdown internetarchive huggingface_hub
+          pip3 install --no-cache-dir gdown internetarchive "huggingface_hub[cli]"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Process, Download & Upload (File-by-File / Pipeline)
         env:
@@ -103,7 +104,6 @@ jobs:
             # Upload Google Drive
             if [ "$UPLOAD_GDRIVE" = "true" ] && [ "$HAS_RCLONE" -eq 1 ]; then
               echo "  ↳ Tải lên Google Drive..."
-              # Giữ nguyên cấu trúc thư mục con nếu có
               SUBDIR=$(dirname "$relative_name")
               if [ "$SUBDIR" = "." ]; then
                 rclone copy "$file_path" "gdrive:Mirror-Cloud" --drive-chunk-size 64M --progress
@@ -112,16 +112,15 @@ jobs:
               fi
             fi
 
-            # Upload Hugging Face
+            # Upload Hugging Face (Dùng python -m để bảo đảm chạy độc lập với PATH)
             if [ "$UPLOAD_HF" = "true" ] && [ -n "${HF_TOKEN:-}" ]; then
               echo "  ↳ Tải lên Hugging Face..."
-              huggingface-cli upload "$HF_REPO_NAME" \
+              python3 -m huggingface_hub.cli.hf upload "$HF_REPO_NAME" \
                 "$file_path" \
                 "$relative_name" \
                 --repo-type model \
                 --token "$HF_TOKEN"
             fi
-
 
             # Upload Archive.org
             if [ "$UPLOAD_IA" = "true" ] && [ -f ~/.config/ia.ini ]; then
@@ -154,28 +153,23 @@ jobs:
               fi
 
               echo "📋 Đang lấy danh sách các file trong folder..."
-              # Lấy danh sách đường dẫn relative của toàn bộ file
               rclone lsf "gdrive:" --drive-root-folder-id="$TARGET_ID" --recursive --files-only > file_list.txt
 
               echo "Tìm thấy $(wc -l < file_list.txt) file cần chuyển giao:"
               cat file_list.txt
 
-              # Vòng lặp tải và upload từng file một
               while IFS= read -r rel_file || [ -n "$rel_file" ]; do
                 [ -z "$rel_file" ] && continue
                 echo "=================================================="
                 echo "📥 Đang tải: $rel_file"
                 
-                # Tạo folder cha cục bộ nếu file nằm trong subfolder
                 mkdir -p "work_dir/$(dirname "$rel_file")"
                 
-                # Tải đúng 1 file duy nhất bằng rclone copyto
                 rclone copyto "gdrive:$rel_file" "work_dir/$rel_file" \
                   --drive-root-folder-id="$TARGET_ID" \
                   --progress \
                   --drive-acknowledge-abuse
 
-                # Upload lên HF / Gdrive / IA rồi xóa ngay
                 upload_and_cleanup_file "work_dir/$rel_file" "$rel_file"
 
               done < file_list.txt
