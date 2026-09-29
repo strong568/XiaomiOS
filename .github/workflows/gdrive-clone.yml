@@ -42,7 +42,7 @@ jobs:
           RAW_URL="${{ github.event.inputs.source_url }}"
           DEST="${{ github.event.inputs.dest_folder }}"
 
-          # 1. Trích xuất ID chuẩn (hỗ trợ link uc?id=..., /file/d/..., /folders/...)
+          # 1. Trích xuất ID chuẩn (hỗ trợ url dạng id=, /d/, /folders/)
           if echo "$RAW_URL" | grep -q "id="; then
             TARGET_ID=$(echo "$RAW_URL" | grep -oP '(?<=id=)[a-zA-Z0-9_-]+')
           elif echo "$RAW_URL" | grep -q "/d/"; then
@@ -62,7 +62,40 @@ jobs:
           echo "🔍 Loại nguồn: $TARGET_KIND"
           echo "📂 Drive ID nguồn: $TARGET_ID"
 
-          # Đảm bảo thư mục đích tồn tại và lấy ID thư mục đích
+          # --- LẤY TÊN VÀ DUNG LƯỢNG NGUỒN ĐẦU VÀO ---
+          INPUT_NAME="N/A"
+          INPUT_SIZE="N/A"
+
+          if [ "$TARGET_KIND" = "FILE" ]; then
+            # Cách a: Lấy tiêu đề trực tiếp từ Google Drive preview page
+            PAGE_TITLE=$(curl -sL "https://drive.google.com/file/d/${TARGET_ID}/view" | grep -oP '(?<=<meta property="og:title" content=").*?(?=")' | head -n 1 || true)
+            if [ -n "$PAGE_TITLE" ]; then
+              INPUT_NAME="$PAGE_TITLE"
+            fi
+
+            # Cách b: Tra cứu dung lượng & tên bổ sung bằng rclone
+            META_JSON=$(rclone backend metadata gdrive: "$TARGET_ID" 2>/dev/null || true)
+            if [ -n "$META_JSON" ]; then
+              R_NAME=$(echo "$META_JSON" | jq -r '.name // empty' 2>/dev/null || true)
+              [ -n "$R_NAME" ] && INPUT_NAME="$R_NAME"
+              R_SIZE=$(echo "$META_JSON" | jq -r '.size // empty' 2>/dev/null || true)
+              if [ -n "$R_SIZE" ] && [ "$R_SIZE" -ge 0 ] 2>/dev/null; then
+                INPUT_SIZE=$(numfmt --to=iec-i --suffix=B --format="\%.2f" "$R_SIZE" 2>/dev/null)
+              fi
+            fi
+          else
+            FOLDER_INFO=$(rclone size "gdrive,root_folder_id=${TARGET_ID}:" 2>/dev/null || true)
+            if [ -n "$FOLDER_INFO" ]; then
+              F_SIZE_B=$(echo "$FOLDER_INFO" | grep -oP '(?<=Total size: ).*?(?= \()' | tr -d ' ' || true)
+              [ -n "$F_SIZE_B" ] && INPUT_SIZE="$F_SIZE_B"
+            fi
+            INPUT_NAME="Folder_${TARGET_ID}"
+          fi
+
+          echo "📄 Tên nguồn phát hiện: $INPUT_NAME"
+          echo "📦 Dung lượng nguồn: $INPUT_SIZE"
+
+          # 3. Tạo thư mục đích và lấy ID
           rclone mkdir "gdrive:${DEST}"
           DEST_ID=$(rclone backend fileid gdrive: "${DEST}" 2>/dev/null | tr -d ' \n\r')
 
@@ -79,7 +112,6 @@ jobs:
               METHOD_USED="Server-Side Direct (Folder)"
             fi
           else
-            # Với FILE: Dùng copyid chuẩn xác theo target destination
             if [ -n "$DEST_ID" ] && [ "$DEST_ID" != "Root" ]; then
               rclone backend copyid gdrive: "$TARGET_ID" -o "dst-dir-id=${DEST_ID}" > copy.log 2>&1 || true
             else
@@ -87,7 +119,6 @@ jobs:
             fi
 
             cat copy.log
-            # Chỉ coi là thành công khi copy.log có kết quả và không dính lỗi
             if [ -s copy.log ] && ! grep -qiE "failed|error|need an even" copy.log; then
               COPIED_SUCCESS=1
               METHOD_USED="Server-Side Direct (File)"
@@ -128,19 +159,10 @@ jobs:
             rm -rf ./temp_transfer
           fi
 
-          # 6. Trích xuất thông tin
+          # 6. Trích xuất thông tin đích
           set +e
           DEST_LINK=$(rclone link "gdrive:${DEST}" 2>/dev/null)
           rclone lsjson "gdrive:${DEST}" | jq '[.[] | select(.Name != "cookies.txt" and .Name != "download")]' > dest_files.json 2>/dev/null
-
-          SRC_NAME=$(jq -r 'sort_by(.ModTime) | reverse | .[0].Name // "N/A"' dest_files.json)
-          LATEST_BYTES=$(jq -r 'sort_by(.ModTime) | reverse | .[0].Size // empty' dest_files.json)
-          
-          if [ -n "$LATEST_BYTES" ] && [ "$LATEST_BYTES" -ge 0 ] 2>/dev/null; then
-            SRC_SIZE=$(numfmt --to=iec-i --suffix=B --format="\%.2f" "$LATEST_BYTES" 2>/dev/null)
-          else
-            SRC_SIZE="N/A"
-          fi
 
           OUTPUT_FILE="summary_output.md"
           > "$OUTPUT_FILE"
@@ -160,8 +182,8 @@ jobs:
             done
           fi
 
-          echo "SRC_NAME=${SRC_NAME}" >> $GITHUB_ENV
-          echo "SRC_SIZE=${SRC_SIZE}" >> $GITHUB_ENV
+          echo "INPUT_NAME=${INPUT_NAME}" >> $GITHUB_ENV
+          echo "INPUT_SIZE=${INPUT_SIZE}" >> $GITHUB_ENV
           echo "DEST_LINK=${DEST_LINK}" >> $GITHUB_ENV
           echo "METHOD_USED=${METHOD_USED}" >> $GITHUB_ENV
           set -e
@@ -175,8 +197,8 @@ jobs:
               echo ""
               echo "#### 📥 Nguồn (Input):"
               echo "- **URL nguồn:** [${{ github.event.inputs.source_url }}](${{ github.event.inputs.source_url }})"
-              echo "- **Tên file gần nhất:** \`${SRC_NAME}\`"
-              echo "- **Dung lượng:** \`${SRC_SIZE}\`"
+              echo "- **Tên file/nguồn:** \`${INPUT_NAME}\`"
+              echo "- **Dung lượng nguồn:** \`${INPUT_SIZE}\`"
               echo "- **Phương thức áp dụng:** \`${METHOD_USED}\`"
               echo ""
               echo "#### 📤 Đích đến (Output):"
@@ -185,7 +207,7 @@ jobs:
                 echo "- **Link thư mục:** [Mở thư mục đích](${DEST_LINK})"
               fi
               echo ""
-              echo "##### 📄 Danh sách file tải lên:"
+              echo "##### 📄 Danh sách file trong thư mục đích:"
               cat summary_output.md 2>/dev/null || echo "Không có file nào."
             } >> $GITHUB_STEP_SUMMARY
           else
