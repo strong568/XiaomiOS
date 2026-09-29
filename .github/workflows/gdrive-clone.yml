@@ -42,7 +42,7 @@ jobs:
           RAW_URL="${{ github.event.inputs.source_url }}"
           DEST="${{ github.event.inputs.dest_folder }}"
 
-          # 1. Trích xuất ID chuẩn (hỗ trợ url dạng id=, /d/, /folders/)
+          # 1. Trích xuất ID chuẩn
           if echo "$RAW_URL" | grep -q "id="; then
             TARGET_ID=$(echo "$RAW_URL" | grep -oP '(?<=id=)[a-zA-Z0-9_-]+')
           elif echo "$RAW_URL" | grep -q "/d/"; then
@@ -62,48 +62,62 @@ jobs:
           echo "🔍 Loại nguồn: $TARGET_KIND"
           echo "📂 Drive ID nguồn: $TARGET_ID"
 
-          # --- LẤY TÊN VÀ DUNG LƯỢNG NGUỒN ĐẦU VÀO ---
-          INPUT_NAME="N/A"
-          INPUT_SIZE="N/A"
+          # 2. LẤY TÊN VÀ DUNG LƯỢNG NGUỒN CHUẨN XÁC
+          INPUT_NAME=""
+          INPUT_SIZE=""
 
           if [ "$TARGET_KIND" = "FILE" ]; then
-            # Cách a: Lấy tiêu đề trực tiếp từ Google Drive preview page
+            DL_PAGE=$(curl -sL "https://drive.usercontent.google.com/download?id=${TARGET_ID}&export=download")
+            
+            # Lấy dung lượng file trong ngoặc đơn
+            INPUT_SIZE=$(echo "$DL_PAGE" | grep -oP '\([0-9.,]+\s*[KMGTP]?i?B?\)' | tr -d '()' | head -n 1 || true)
+
+            # Lấy tên file từ og:title
             PAGE_TITLE=$(curl -sL "https://drive.google.com/file/d/${TARGET_ID}/view" | grep -oP '(?<=<meta property="og:title" content=").*?(?=")' | head -n 1 || true)
             if [ -n "$PAGE_TITLE" ]; then
               INPUT_NAME="$PAGE_TITLE"
             fi
-
-            # Cách b: Tra cứu dung lượng & tên bổ sung bằng rclone
-            META_JSON=$(rclone backend metadata gdrive: "$TARGET_ID" 2>/dev/null || true)
-            if [ -n "$META_JSON" ]; then
-              R_NAME=$(echo "$META_JSON" | jq -r '.name // empty' 2>/dev/null || true)
-              [ -n "$R_NAME" ] && INPUT_NAME="$R_NAME"
-              R_SIZE=$(echo "$META_JSON" | jq -r '.size // empty' 2>/dev/null || true)
-              if [ -n "$R_SIZE" ] && [ "$R_SIZE" -ge 0 ] 2>/dev/null; then
-                INPUT_SIZE=$(numfmt --to=iec-i --suffix=B --format="\%.2f" "$R_SIZE" 2>/dev/null)
-              fi
-            fi
           else
             FOLDER_INFO=$(rclone size "gdrive,root_folder_id=${TARGET_ID}:" 2>/dev/null || true)
             if [ -n "$FOLDER_INFO" ]; then
-              F_SIZE_B=$(echo "$FOLDER_INFO" | grep -oP '(?<=Total size: ).*?(?= \()' | tr -d ' ' || true)
-              [ -n "$F_SIZE_B" ] && INPUT_SIZE="$F_SIZE_B"
+              INPUT_SIZE=$(echo "$FOLDER_INFO" | grep -oP '(?<=Total size: ).*?(?= \()' | tr -d ' ' || true)
             fi
             INPUT_NAME="Folder_${TARGET_ID}"
           fi
 
+          [ -z "$INPUT_NAME" ] && INPUT_NAME="File_${TARGET_ID}"
+          [ -z "$INPUT_SIZE" ] && INPUT_SIZE="Không xác định"
+
           echo "📄 Tên nguồn phát hiện: $INPUT_NAME"
           echo "📦 Dung lượng nguồn: $INPUT_SIZE"
 
-          # 3. Tạo thư mục đích và lấy ID
+          # 3. LẤY CHÍNH XÁC ID CỦA THƯ MỤC ĐÍCH (MIRROR-CLOUD)
           rclone mkdir "gdrive:${DEST}"
-          DEST_ID=$(rclone backend fileid gdrive: "${DEST}" 2>/dev/null | tr -d ' \n\r')
+          
+          # Đẩy 1 file tạm để đọc parent ID chuẩn của thư mục đích
+          echo "mark" > .marker
+          rclone copy .marker "gdrive:${DEST}"
+          DEST_ID=$(rclone backend fileid gdrive: "${DEST}/.marker" 2>/dev/null | tr -d ' \n\r')
+          if [ -n "$DEST_ID" ]; then
+            # Đọc parent ID từ metadata của marker
+            DEST_FOLDER_ID=$(rclone backend metadata gdrive: "$DEST_ID" 2>/dev/null | jq -r '.parents[0] // empty' || true)
+          fi
+          rclone deletefile "gdrive:${DEST}/.marker" 2>/dev/null || true
+          rm -f .marker
+
+          echo "📂 Folder ID đích (${DEST}):${DEST_FOLDER_ID:-'Không lấy được ID'}"
 
           COPIED_SUCCESS=0
 
           echo "⚡ [Cách 1] Đang thử nhân bản trực tiếp bằng Server-Side..."
           if [ "$TARGET_KIND" = "FOLDER" ]; then
-            if rclone copy "gdrive,root_folder_id=${TARGET_ID}:" "gdrive:${DEST}" \
+            if [ -n "$DEST_FOLDER_ID" ]; then
+              TARGET_REMOTE="gdrive,root_folder_id=${DEST_FOLDER_ID}:"
+            else
+              TARGET_REMOTE="gdrive:${DEST}"
+            fi
+
+            if rclone copy "gdrive,root_folder_id=${TARGET_ID}:" "$TARGET_REMOTE" \
                 --drive-server-side-across-configs \
                 --drive-acknowledge-abuse \
                 --progress \
@@ -112,10 +126,11 @@ jobs:
               METHOD_USED="Server-Side Direct (Folder)"
             fi
           else
-            if [ -n "$DEST_ID" ] && [ "$DEST_ID" != "Root" ]; then
-              rclone backend copyid gdrive: "$TARGET_ID" -o "dst-dir-id=${DEST_ID}" > copy.log 2>&1 || true
+            # Với File: bắt buộc copy vào Folder ID đích bằng copyid
+            if [ -n "$DEST_FOLDER_ID" ]; then
+              rclone backend copyid gdrive: "$TARGET_ID" "$DEST_FOLDER_ID" > copy.log 2>&1 || true
             else
-              rclone backend copyid gdrive: "$TARGET_ID" "gdrive:${DEST}" > copy.log 2>&1 || true
+              rclone backend copyid gdrive: "$TARGET_ID" -o "dst-dir-id=${DEST}" > copy.log 2>&1 || true
             fi
 
             cat copy.log
@@ -125,9 +140,9 @@ jobs:
             fi
           fi
 
-          # 5. Fallback tải về máy ảo nếu Server-Side không được
+          # 4. Fallback tải về máy ảo nếu Server-Side không được
           if [ "$COPIED_SUCCESS" -eq 1 ]; then
-            echo "🎉 Server-Side Copy thành công!"
+            echo "🎉 Server-Side Copy thành công vào ${DEST}!"
           else
             echo "⚠️ Server-Side không khả dụng, chuyển sang tải gdown..."
             METHOD_USED="gdown Download & Upload"
@@ -154,15 +169,15 @@ jobs:
               exit 1
             fi
 
-            echo "🚀 Đang upload file lên Google Drive..."
+            echo "🚀 Đang upload file vào Google Drive (${DEST})..."
             rclone copy ./temp_transfer "gdrive:${DEST}" --progress --drive-chunk-size 64M --transfers 4
             rm -rf ./temp_transfer
           fi
 
-          # 6. Trích xuất thông tin đích
+          # 5. Xuất báo cáo tóm tắt
           set +e
           DEST_LINK=$(rclone link "gdrive:${DEST}" 2>/dev/null)
-          rclone lsjson "gdrive:${DEST}" | jq '[.[] | select(.Name != "cookies.txt" and .Name != "download")]' > dest_files.json 2>/dev/null
+          rclone lsjson "gdrive:${DEST}" | jq '[.[] | select(.Name != "cookies.txt" and .Name != "download" and .Name != ".marker")]' > dest_files.json 2>/dev/null
 
           OUTPUT_FILE="summary_output.md"
           > "$OUTPUT_FILE"
