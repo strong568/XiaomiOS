@@ -71,13 +71,19 @@ jobs:
           if echo "$RAW_URL" | grep -qE "drive\.google\.com|drive\.usercontent\.google\.com"; then
             echo "📦 Nhận diện nguồn: Google Drive"
             
-            # Trích xuất Folder ID hoặc File ID chuẩn xác bằng Python inline
-            EXTRACTED_TYPE=$(python3 -c "import re, sys; url = '''$RAW_URL'''; is_folder = 'folders' in url or 'folder' in url; m = (re.search(r'folders/([a-zA-Z0-9_-]+)', url) or re.search(r'id=([a-zA-Z0-9_-]+)', url)) if is_folder else (re.search(r'/d/([a-zA-Z0-9_-]+)', url) or re.search(r'id=([a-zA-Z0-9_-]+)', url)); print(f'FOLDER:{m.group(1)}' if is_folder and m else (f'FILE:{m.group(1)}' if m else 'UNKNOWN:'))")
+            # Làm sạch URL: bỏ /mobile và cắt bỏ toàn bộ query sau dấu ?
+            CLEAN_URL=$(echo "$RAW_URL" | sed 's/\/mobile//g' | cut -d'?' -f1)
 
-            TARGET_KIND=$(echo "$EXTRACTED_TYPE" | cut -d':' -f1)
-            TARGET_ID=$(echo "$EXTRACTED_TYPE" | cut -d':' -f2)
+            # Nhận diện Folder hay File bằng Bash regex thuần, không dùng Python
+            if echo "$RAW_URL" | grep -qE "folders\/|folder"; then
+              TARGET_KIND="FOLDER"
+              TARGET_ID=$(echo "$CLEAN_URL" | grep -oP 'folders\/\K[a-zA-Z0-9_-]+' || echo "$RAW_URL" | grep -oP 'id=\K[a-zA-Z0-9_-]+' | head -n 1)
+            else
+              TARGET_KIND="FILE"
+              TARGET_ID=$(echo "$CLEAN_URL" | grep -oP '\/d\/\K[a-zA-Z0-9_-]+' || echo "$RAW_URL" | grep -oP 'id=\K[a-zA-Z0-9_-]+' | head -n 1)
+            fi
 
-            echo "🔍 Loại nguồn: $TARGET_KIND"
+            echo "🔍 Loại nguồn nhận diện: $TARGET_KIND"
             echo "📂 ID chính xác: $TARGET_ID"
 
             if [ -z "$TARGET_ID" ]; then
@@ -86,7 +92,7 @@ jobs:
             fi
 
             # Trường hợp là THƯ MỤC (Folder)
-            if [ "$TARGET_KIND" == "FOLDER" ]; then
+            if [ "$TARGET_KIND" = "FOLDER" ]; then
               DOWNLOAD_SUCCESS=0
 
               echo "⚡ Đang tải thư mục bằng gdown..."
@@ -96,6 +102,7 @@ jobs:
                 fi
               fi
 
+              # Fallback sang Rclone nếu gdown nghẽn quota
               if [ "$DOWNLOAD_SUCCESS" -eq 0 ] && [ "$HAS_RCLONE" -eq 1 ]; then
                 echo "🚀 Fallback sang Rclone trỏ đúng Folder ID..."
                 rclone copy "gdrive:" ./target_payload \
@@ -116,6 +123,7 @@ jobs:
                      "https://drive.google.com/uc?export=download&id=${TARGET_ID}"
               cd ..
             fi
+
 
           # 2. Pixeldrain
           elif echo "$RAW_URL" | grep -q "pixeldrain.com"; then
