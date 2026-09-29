@@ -73,10 +73,13 @@ jobs:
 
           COPIED_SUCCESS=0
 
-          # 2. Bước 1: Thử Server-Side Copy
+          # 2. Xử lý sao chép (Server-Side Copy có xác thực token)
+          COPIED_SUCCESS=0
+
           echo "⚡ [Cách 1] Đang thử nhân bản trực tiếp bằng Server-Side..."
           if [ "$TARGET_KIND" = "FOLDER" ]; then
-            if rclone copy ":drive,root_folder_id=${TARGET_ID}:" "gdrive:${DEST}" \
+            # Dùng cấu hình gdrive đã đăng nhập, trỏ root_folder_id vào thư mục nguồn
+            if rclone copy "gdrive,root_folder_id=${TARGET_ID}:" "gdrive:${DEST}" \
                 --drive-server-side-across-configs \
                 --drive-acknowledge-abuse \
                 --progress \
@@ -85,18 +88,20 @@ jobs:
               METHOD_USED="Server-Side Direct (Folder)"
             fi
           else
-            # Chạy backend copyid chuẩn: truyền ID thư mục đích (DEST_DIR_ID)
+            # Thử cách 1: Sao chép File ID trực tiếp bằng token của gdrive
             if [ -n "$DEST_DIR_ID" ] && rclone backend copyid gdrive: "$TARGET_ID" "$DEST_DIR_ID"; then
               COPIED_SUCCESS=1
               METHOD_USED="Server-Side Direct (File)"
-            elif rclone copy ":drive,root_folder_id=${TARGET_ID}:" "gdrive:${DEST}" \
+            # Thử cách 2: Mượn token của gdrive kèm root_folder_id nguồn
+            elif rclone copy "gdrive,root_folder_id=${TARGET_ID}:" "gdrive:${DEST}" \
                 --drive-server-side-across-configs \
                 --drive-acknowledge-abuse \
                 --progress; then
               COPIED_SUCCESS=1
-              METHOD_USED="Server-Side Direct (Root ID)"
+              METHOD_USED="Server-Side Direct (File Root)"
             fi
           fi
+
 
           # 3. Bước 2: Fallback sang gdown/aria2c nếu Server-Side không thành công
           if [ "$COPIED_SUCCESS" -eq 1 ]; then
