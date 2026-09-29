@@ -50,13 +50,13 @@ jobs:
           DEST="${{ github.event.inputs.dest_folder }}"
           CLEAN_URL=$(echo "$RAW_URL" | sed 's/\/mobile//g' | cut -d'?' -f1)
 
-          # 1. Trích xuất ID chính xác (đã sửa toàn bộ pipe chuẩn | và ||)
+          # 1. Trích xuất ID chuẩn xác tuyệt đối (Bỏ qua /view, ?usp=sharing, /mobile)
+          TARGET_ID=$(echo "$RAW_URL" | sed -E 's/.*(\/d\/|folders\/|id=)//; s/[/?&].*//' | tr -d ' \n\r')
+
           if echo "$RAW_URL" | grep -qE "folders\/|folder"; then
             TARGET_KIND="FOLDER"
-            TARGET_ID=$(echo "$CLEAN_URL" \vert{} grep -oP 'folders\/\K[a-zA-Z0-9_-]+' \vert{}\vert{} echo "$RAW_URL" | grep -oP 'id=\K[a-zA-Z0-9_-]+' | head -n 1)
           else
             TARGET_KIND="FILE"
-            TARGET_ID=$(echo "$CLEAN_URL" \vert{} grep -oP '(?<=\/d\/)[a-zA-Z0-9_-]+' \vert{}\vert{} echo "$RAW_URL" | grep -oP '(?<=id=)[a-zA-Z0-9_-]+' | head -n 1)
           fi
 
           echo "🔍 Loại nguồn: $TARGET_KIND"
@@ -86,6 +86,7 @@ jobs:
                    "https://drive.google.com/uc?export=download&id=${TARGET_ID}"
             cd ..
           fi
+
 
           # 3. Kiểm tra dữ liệu thực tế
           if [ -z "$(ls -A ./temp_transfer 2>/dev/null)" ]; then
