@@ -42,6 +42,7 @@ jobs:
           RAW_URL="${{ github.event.inputs.source_url }}"
           DEST="${{ github.event.inputs.dest_folder }}"
 
+          # 1. Trích xuất ID chuẩn (hỗ trợ url dạng id=, /d/, /folders/)
           if echo "$RAW_URL" | grep -q "id="; then
             TARGET_ID=$(echo "$RAW_URL" | grep -oP '(?<=id=)[a-zA-Z0-9_-]+')
           elif echo "$RAW_URL" | grep -q "/d/"; then
@@ -61,33 +62,23 @@ jobs:
           echo "🔍 Loại nguồn: $TARGET_KIND"
           echo "📂 Drive ID nguồn: $TARGET_ID"
 
+          # Tạo thư mục đích trước để đảm bảo tồn tại
           rclone mkdir "gdrive:${DEST}"
-          DEST_DIR_ID=$(rclone backend fileid gdrive: "${DEST}" 2>/dev/null | tr -d ' \n\r')
-          echo "📂 Folder ID đích (${DEST}):${DEST_DIR_ID:-'Root'}"
 
           COPIED_SUCCESS=0
 
           echo "⚡ [Cách 1] Đang thử nhân bản trực tiếp bằng Server-Side..."
-          if [ "$TARGET_KIND" = "FOLDER" ]; then
-            if rclone copy "gdrive,root_folder_id=${TARGET_ID}:" "gdrive:${DEST}" \
-                --drive-server-side-across-configs \
-                --drive-acknowledge-abuse \
-                --progress \
-                --transfers 8; then
-              COPIED_SUCCESS=1
-              METHOD_USED="Server-Side Direct (Folder)"
-            fi
-          else
-            TARGET_DEST="${DEST_DIR_ID}"
-            [ -z "$TARGET_DEST" ] && TARGET_DEST="${DEST}"
-            rclone backend copyid gdrive: "$TARGET_ID" "$TARGET_DEST" > copy.log 2>&1 || true
-            cat copy.log
-            if ! grep -qi "failed" copy.log && ! grep -qi "error" copy.log; then
-              COPIED_SUCCESS=1
-              METHOD_USED="Server-Side Direct (File)"
-            fi
+          # Đưa thẳng file/folder từ ID nguồn vào remote thư mục đích gdrive:DEST
+          if rclone copy "gdrive,root_folder_id=${TARGET_ID}:" "gdrive:${DEST}" \
+              --drive-server-side-across-configs \
+              --drive-acknowledge-abuse \
+              --progress \
+              --transfers 8; then
+            COPIED_SUCCESS=1
+            METHOD_USED="Server-Side Direct (${TARGET_KIND})"
           fi
 
+          # 5. Fallback tải về máy ảo nếu Server-Side không được
           if [ "$COPIED_SUCCESS" -eq 1 ]; then
             echo "🎉 Server-Side Copy thành công!"
           else
@@ -121,6 +112,7 @@ jobs:
             rm -rf ./temp_transfer
           fi
 
+          # 6. Trích xuất thông tin tóm tắt
           set +e
           DEST_LINK=$(rclone link "gdrive:${DEST}" 2>/dev/null)
           rclone lsjson "gdrive:${DEST}" | jq '[.[] | select(.Name != "cookies.txt" and .Name != "download")]' > dest_files.json 2>/dev/null
