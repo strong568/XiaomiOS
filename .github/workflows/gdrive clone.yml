@@ -1,3 +1,28 @@
+name: GDrive Server-Side Direct Clone
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: "Google Drive File hoặc Folder URL nguồn"
+        required: true
+
+      dest_folder:
+        description: "Tên thư mục đích trên Google Drive của bạn"
+        required: false
+        default: "Mirror-Cloud"
+
+jobs:
+  server_side_clone:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install Tools
+        run: |
+          sudo apt update
+          sudo apt install -y aria2 curl
+          curl https://rclone.org/install.sh | sudo bash
+
       - name: Clone / Copy to Google Drive
         env:
           RCLONE_CONFIG_DATA: ${{ secrets.RCLONE_CONFIG }}
