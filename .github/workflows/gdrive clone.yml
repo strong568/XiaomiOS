@@ -68,33 +68,32 @@ jobs:
 
           SERVER_SIDE_SUCCESS=0
 
-          # 2. Bước 1: Thử Server-Side Copy trước (Không tốn mạng tải về)
-          echo "⚡ [Cách 1] Đang thử nhân bản trực tiếp bằng Server-Side..."
+          # 2. Xử lý sao chép
+          COPIED_SUCCESS=0
+
           if [ "$TARGET_KIND" = "FOLDER" ]; then
+            echo "⚡ Đang sao chép Thư mục..."
+            # Thử Server-Side Copy folder trước
             if rclone copy ":drive,root_folder_id=${TARGET_ID}:" "gdrive:${DEST}" \
                 --drive-server-side-across-configs \
                 --drive-acknowledge-abuse \
                 --progress \
                 --transfers 8; then
-              SERVER_SIDE_SUCCESS=1
+              COPIED_SUCCESS=1
+              METHOD_USED="Server-Side Direct (Folder)"
             fi
           else
-            if rclone backend copyid gdrive: "$TARGET_ID" "${DEST}/" 2>/dev/null; then
-              SERVER_SIDE_SUCCESS=1
-            elif rclone copy ":drive,root_folder_id=${TARGET_ID}:" "gdrive:${DEST}" \
-                --drive-server-side-across-configs \
-                --drive-acknowledge-abuse \
-                --progress 2>/dev/null; then
-              SERVER_SIDE_SUCCESS=1
+            echo "⚡ Đang thử Server-Side copy cho File..."
+            # Dùng backend copyid đúng cú pháp rclone
+            if rclone backend copyid gdrive: "$TARGET_ID" "${DEST}" 2>&1; then
+              COPIED_SUCCESS=1
+              METHOD_USED="Server-Side Direct (File)"
             fi
           fi
 
-          # 3. Bước 2: Nếu Server-Side thất bại, tự động Fallback sang gdown
-          if [ "$SERVER_SIDE_SUCCESS" -eq 1 ]; then
-            echo "🎉 Server-Side Copy thành công! Không cần tải qua máy ảo."
-            METHOD_USED="Server-Side Direct (Không tốn băng thông)"
-          else
-            echo "⚠️ Server-Side bị Google hạn chế. Chuyển sang [Cách 2] Tải về bằng gdown..."
+          # 3. Fallback: Nếu Server-Side không copy được file/folder, chuyển sang gdown/aria2c
+          if [ "$COPIED_SUCCESS" -ne 1 ]; then
+            echo "⚠️ Server-Side không khả dụng. Chuyển sang tải về máy ảo bằng gdown/aria2c..."
             METHOD_USED="gdown Download & Upload"
             mkdir -p temp_transfer
 
@@ -114,14 +113,15 @@ jobs:
             fi
 
             if [ -z "$(ls -A ./temp_transfer 2>/dev/null)" ]; then
-              echo "❌ Không tải được file qua gdown!"
+              echo "❌ Không tải được file từ link nguồn!"
               exit 1
             fi
 
-            echo "🚀 Đang upload dữ liệu từ temp_transfer lên Google Drive..."
+            echo "🚀 Đang upload file lên Google Drive..."
             rclone copy ./temp_transfer "gdrive:${DEST}" --progress --drive-chunk-size 64M --transfers 4
             rm -rf ./temp_transfer
           fi
+
 
           # 4. Lấy link và in danh sách kiểm tra trên Drive
           DEST_LINK=$(rclone link "gdrive:${DEST}" 2>/dev/null || echo "")
@@ -140,13 +140,18 @@ jobs:
               echo ""
               echo "#### 📥 Nguồn (Input):"
               echo "- **URL nguồn:** [${{ github.event.inputs.source_url }}](${{ github.event.inputs.source_url }})"
+              echo "- **Tên file / Folder:** \`${SRC_NAME}\`"
+              echo "- **Dung lượng:** \`${SRC_SIZE}\`"
               echo "- **Phương thức áp dụng:** \`${METHOD_USED}\`"
               echo ""
               echo "#### 📤 Đích đến (Output):"
               echo "- **Thư mục lưu trữ:** \`${{ github.event.inputs.dest_folder }}\`"
               if [ -n "${DEST_LINK:-}" ]; then
-                echo "- **Google Drive Link:** [Mở thư mục đích](${DEST_LINK})"
+                echo "- **Link thư mục Drive:** [Mở thư mục đích](${DEST_LINK})"
               fi
+              echo ""
+              echo "##### 📄 Chi tiết file đầu ra:"
+              echo -e "${OUTPUT_TABLE}"
             } >> $GITHUB_STEP_SUMMARY
           else
             {
