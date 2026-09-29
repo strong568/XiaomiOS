@@ -73,19 +73,19 @@ jobs:
             
             # Trích xuất Folder ID hoặc File ID bằng Python (chuẩn xác tuyệt đối, không lo URL bị bọc tham số)
             EXTRACTED_TYPE=$(python3 -c "
-import re, sys
-url = '''$RAW_URL'''
-if 'folders' in url or 'folder' in url:
-    m = re.search(r'folders/([a-zA-Z0-9_-]+)', url) or re.search(r'id=([a-zA-Z0-9_-]+)', url)
-    if m:
-        print(f'FOLDER:{m.group(1)}')
-        sys.exit(0)
-m = re.search(r'/d/([a-zA-Z0-9_-]+)', url) or re.search(r'id=([a-zA-Z0-9_-]+)', url)
-if m:
-    print(f'FILE:{m.group(1)}')
-    sys.exit(0)
-print('UNKNOWN:')
-")
+            import re, sys
+            url = '''$RAW_URL'''
+            if 'folders' in url or 'folder' in url:
+                m = re.search(r'folders/([a-zA-Z0-9_-]+)', url) or re.search(r'id=([a-zA-Z0-9_-]+)', url)
+                if m:
+                    print(f'FOLDER:{m.group(1)}')
+                    sys.exit(0)
+            m = re.search(r'/d/([a-zA-Z0-9_-]+)', url) or re.search(r'id=([a-zA-Z0-9_-]+)', url)
+            if m:
+                print(f'FILE:{m.group(1)}')
+                sys.exit(0)
+            print('UNKNOWN:')
+            ")
 
             TARGET_KIND=$(echo "$EXTRACTED_TYPE" | cut -d':' -f1)
             TARGET_ID=$(echo "$EXTRACTED_TYPE" | cut -d':' -f2)
