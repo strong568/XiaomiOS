@@ -1,0 +1,70 @@
+name: Move ZKOS and ZKUI Files to Zk-rom
+
+on:
+  workflow_dispatch: # Cho phép bấm chạy thủ công trên GitHub
+
+jobs:
+  move-zk-files:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Hugging Face Hub
+        run: |
+          pip install --upgrade huggingface_hub
+
+      - name: Move files to Zk-rom
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          REPO_ID: "Strong568/Mirror-Cloud"
+          TARGET_FOLDER: "Zk-rom"
+          REPO_TYPE: "model"
+        run: |
+          python - << 'EOF'
+          import os
+          from huggingface_hub import HfApi, CommitOperationCopy, CommitOperationDelete
+
+          token = os.environ.get("HF_TOKEN")
+          repo_id = os.environ.get("REPO_ID")
+          target_folder = os.environ.get("TARGET_FOLDER")
+          repo_type = os.environ.get("REPO_TYPE")
+
+          api = HfApi(token=token)
+
+          print(f"Kiểm tra danh sách file trong: {repo_id} ({repo_type})...")
+          try:
+              files = api.list_repo_files(repo_id=repo_id, repo_type=repo_type)
+          except Exception as e:
+              alt_type = "dataset" if repo_type == "model" else "model"
+              print(f"Chuyển sang repo_type='{alt_type}' do: {e}")
+              repo_type = alt_type
+              files = api.list_repo_files(repo_id=repo_id, repo_type=repo_type)
+
+          operations = []
+          for f in files:
+              # Lấy các file bắt đầu bằng ZKOS_ hoặc ZKUI_ ở thư mục gốc
+              is_zk_file = f.startswith("ZKOS_") or f.startswith("ZKUI_")
+              if is_zk_file and "/" not in f:
+                  new_path = f"{target_folder}/{f}"
+                  print(f"-> Chuẩn bị di chuyển: {f} => {new_path}")
+                  operations.append(CommitOperationCopy(src_path_in_repo=f, path_in_repo=new_path))
+                  operations.append(CommitOperationDelete(path_in_repo=f))
+
+          if operations:
+              total_files = len(operations) // 2
+              print(f"Đang gửi commit di chuyển {total_files} file...")
+              api.create_commit(
+                  repo_id=repo_id,
+                  operations=operations,
+                  commit_message=f"Move ZKOS and ZKUI files into folder '{target_folder}'",
+                  repo_type=repo_type
+              )
+              print(f"Thành công! Đã chuyển {total_files} file vào thư mục '{target_folder}'.")
+          else:
+              print("Không tìm thấy file ZKOS_ hoặc ZKUI_ nào ở thư mục gốc cần di chuyển.")
+          EOF
+          
