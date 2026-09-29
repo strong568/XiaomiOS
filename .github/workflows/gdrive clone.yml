@@ -22,6 +22,7 @@ jobs:
           sudo apt update
           sudo apt install -y aria2 curl
           curl https://rclone.org/install.sh | sudo bash
+          pip3 install --no-cache-dir gdown
 
       - name: Clone / Copy to Google Drive
         env:
@@ -52,10 +53,10 @@ jobs:
           # 1. Trích xuất ID chính xác
           if echo "$RAW_URL" | grep -qE "folders\/|folder"; then
             TARGET_KIND="FOLDER"
-            TARGET_ID=$(echo "$CLEAN_URL" | grep -oP 'folders\/\K[a-zA-Z0-9_-]+' || echo "$RAW_URL" | grep -oP 'id=\K[a-zA-Z0-9_-]+' | head -n 1)
+            TARGET_ID=$(echo "$CLEAN_URL" \vert{} grep -oP 'folders\/\K[a-zA-Z0-9_-]+' \vert{}\vert{} echo "$RAW_URL" | grep -oP 'id=\K[a-zA-Z0-9_-]+' | head -n 1)
           else
             TARGET_KIND="FILE"
-            TARGET_ID=$(echo "$CLEAN_URL" | grep -oP '(?<=\/d\/)[a-zA-Z0-9_-]+' || echo "$RAW_URL" | grep -oP '(?<=id=)[a-zA-Z0-9_-]+' | head -n 1)
+            TARGET_ID=$(echo "$CLEAN_URL" \vert{} grep -oP '(?<=\/d\/)[a-zA-Z0-9_-]+' \vert{}\vert{} echo "$RAW_URL" | grep -oP '(?<=id=)[a-zA-Z0-9_-]+' | head -n 1)
           fi
 
           echo "🔍 Loại nguồn: $TARGET_KIND"
@@ -68,59 +69,90 @@ jobs:
 
           mkdir -p temp_transfer
 
-          # 2. Xử lý Thư mục
+          # 2. Xử lý tải về
           if [ "$TARGET_KIND" = "FOLDER" ]; then
             echo "⚡ Đang tải Folder bằng gdown..."
             gdown --folder "https://drive.google.com/drive/folders/${TARGET_ID}" -O ./temp_transfer $COOKIE_OPT || true
-
-          # 3. Xử lý File đơn lẻ
           else
-            echo "⚡ Kiểm tra copy Server-side qua Rclone..."
-            COPIED_SERVER=0
-            if rclone backend copyid gdrive: "$TARGET_ID" "${DEST}/" 2>/dev/null; then
-              echo "✅ Đã nhân bản trực tiếp phía máy chủ Google!"
-              COPIED_SERVER=1
-            fi
-
-            if [ "$COPIED_SERVER" -eq 0 ]; then
-              echo "⚡ Đang tải file bằng gdown (tự động bypass cảnh báo virus)..."
-              cd temp_transfer
-              gdown "https://drive.google.com/uc?id=${TARGET_ID}" $COOKIE_OPT || \
-              aria2c --header="User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-                     --check-certificate=false \
-                     --allow-overwrite=true \
-                     --auto-file-renaming=false \
-                     --content-disposition \
-                     -s16 -x16 -j16 \
-                     "https://drive.google.com/uc?export=download&id=${TARGET_ID}"
-              cd ..
-            fi
+            echo "⚡ Đang tải file bằng gdown..."
+            cd temp_transfer
+            gdown "https://drive.google.com/uc?id=${TARGET_ID}" $COOKIE_OPT || \
+            aria2c --header="User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+                   --check-certificate=false \
+                   --allow-overwrite=true \
+                   --auto-file-renaming=false \
+                   --content-disposition \
+                   -s16 -x16 -j16 \
+                   "https://drive.google.com/uc?export=download&id=${TARGET_ID}"
+            cd ..
           fi
 
-          # 4. Kiểm tra dữ liệu thực tế trước khi tải lên
-          if [ "$COPIED_SERVER" -ne 1 ]; then
-            echo "📂 Danh sách file chuẩn bị tải lên:"
-            ls -lh ./temp_transfer
-
-            if [ -z "$(ls -A ./temp_transfer 2>/dev/null)" ]; then
-              echo "❌ Thư mục trống, không tải được file nào!"
-              exit 1
-            fi
-
-            # Kiểm tra kích thước file tải về
-            FILE_NAME=$(ls -S ./temp_transfer | head -n 1)
-            FILE_SIZE=$(stat -c%s "./temp_transfer/$FILE_NAME")
-            echo "📏 Kích thước file lớn nhất: $FILE_SIZE bytes"
-
-            if [ "$FILE_SIZE" -lt 50000000 ]; then
-              echo "⚠️ Cảnh báo: File nhỏ hơn 50MB, có thể bị tải nhầm trang HTML báo lỗi của Google Drive!"
-            fi
-
-            echo "🚀 Đang upload lên Google Drive thư mục '${DEST}'..."
-            rclone copy ./temp_transfer "gdrive:${DEST}" --progress --drive-chunk-size 64M --transfers 4
-            rm -rf ./temp_transfer
+          # 3. Kiểm tra dữ liệu thực tế
+          if [ -z "$(ls -A ./temp_transfer 2>/dev/null)" ]; then
+            echo "❌ Không tải được file nào từ link nguồn!"
+            exit 1
           fi
 
+          echo "📂 Danh sách file sau khi tải:"
+          ls -lh ./temp_transfer
+
+          # Lấy danh sách tên file đầu vào & dung lượng
+          INPUT_FILES=$(ls ./temp_transfer \vert{} tr '\n' ',' \vert{} sed 's/,$//')
+          TOTAL_SIZE=$(du -sh ./temp_transfer | cut -f1)
+
+          echo "INPUT_FILES=${INPUT_FILES}" >> $GITHUB_ENV
+          echo "TOTAL_SIZE=${TOTAL_SIZE}" >> $GITHUB_ENV
+
+          # 4. Upload lên Google Drive
+          echo "🚀 Đang upload lên Google Drive thư mục '${DEST}'..."
+          rclone copy ./temp_transfer "gdrive:${DEST}" --progress --drive-chunk-size 64M --transfers 4
+
+          # 5. Lấy link trực tiếp từng file đầu ra trên Google Drive
           DEST_LINK=$(rclone link "gdrive:${DEST}" 2>/dev/null || echo "")
           echo "DEST_LINK=${DEST_LINK}" >> $GITHUB_ENV
+
+          # Tạo bảng Markdown liệt kê link chi tiết từng file đầu ra
+          OUTPUT_LIST=""
+          for f in ./temp_transfer/*; do
+            [ -e "$f" ] || continue
+            fname=$(basename "$f")
+            flink=$(rclone link "gdrive:${DEST}/${fname}" 2>/dev/null || echo "")
+            if [ -n "$flink" ]; then
+              OUTPUT_LIST="${OUTPUT_LIST}\n- **${fname}**: [Xem/Tải file](${flink})"
+            else
+              OUTPUT_LIST="${OUTPUT_LIST}\n- **${fname}**"
+            fi
+          done
+
+          echo -e "OUTPUT_LIST<<EOF\n${OUTPUT_LIST}\nEOF" >> $GITHUB_ENV
+          rm -rf ./temp_transfer
           echo "✅ Sao chép thành công!"
+
+      - name: Workflow Summary
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            {
+              echo "### ✅ Hoàn tất sao chép sang Google Drive"
+              echo ""
+              echo "#### 📥 Thông tin nguồn (Input):"
+              echo "- **URL nguồn:** [${{ github.event.inputs.source_url }}](${{ github.event.inputs.source_url }})"
+              echo "- **Tên file nhận diện:** \`${INPUT_FILES}\`"
+              echo "- **Tổng dung lượng:** \`${TOTAL_SIZE}\`"
+              echo ""
+              echo "#### 📤 Kết quả đầu ra (Output):"
+              echo "- **Thư mục lưu trữ:** \`${{ github.event.inputs.dest_folder }}\`"
+              if [ -n "${DEST_LINK:-}" ]; then
+                echo "- **Link thư mục Drive:** [Mở thư mục đích](${DEST_LINK})"
+              fi
+              echo ""
+              echo "##### Danh sách file đầu ra:"
+              echo -e "${OUTPUT_LIST}"
+            } >> $GITHUB_STEP_SUMMARY
+          else
+            {
+              echo "### ❌ Thao tác thất bại"
+              echo "- **URL nguồn:** [${{ github.event.inputs.source_url }}](${{ github.event.inputs.source_url }})"
+              echo "- Không thể tải hoặc đưa file lên Drive. Vui lòng kiểm tra lại log chi tiết của bước chạy."
+            } >> $GITHUB_STEP_SUMMARY
+          fi
