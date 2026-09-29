@@ -17,16 +17,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install Rclone
+      - name: Install Tools
         run: |
+          sudo apt update
+          sudo apt install -y aria2 curl
           curl https://rclone.org/install.sh | sudo bash
 
-      - name: Server-Side Copy to Google Drive
+      - name: Clone / Copy to Google Drive
         env:
           RCLONE_CONFIG_DATA: ${{ secrets.RCLONE_CONFIG }}
+          GDRIVE_COOKIES: ${{ secrets.GDRIVE_COOKIES }}
         run: |
           set -e
-          echo "🚀 Khởi động Server-Side Copy giữa Google Drive..."
+          echo "🚀 Khởi động sao chép Google Drive..."
 
           if [ -z "${RCLONE_CONFIG_DATA:-}" ]; then
             echo "❌ Lỗi: Chưa cấu hình Secrets RCLONE_CONFIG!"
@@ -36,6 +39,12 @@ jobs:
           mkdir -p ~/.config/rclone
           echo "$RCLONE_CONFIG_DATA" > ~/.config/rclone/rclone.conf
 
+          COOKIE_OPT=""
+          if [ -n "${GDRIVE_COOKIES:-}" ]; then
+            echo "$GDRIVE_COOKIES" > cookies.txt
+            COOKIE_OPT="--load-cookies cookies.txt"
+          fi
+
           RAW_URL="${{ github.event.inputs.source_url }}"
           DEST="${{ github.event.inputs.dest_folder }}"
           CLEAN_URL=$(echo "$RAW_URL" | sed 's/\/mobile//g' | cut -d'?' -f1)
@@ -43,15 +52,11 @@ jobs:
           if echo "$RAW_URL" | grep -qE "folders\/|folder"; then
             TARGET_KIND="FOLDER"
             TARGET_ID=$(echo "$CLEAN_URL" | grep -oP '(?<=folders\/)[a-zA-Z0-9_-]+' | head -n 1)
-            if [ -z "$TARGET_ID" ]; then
-              TARGET_ID=$(echo "$RAW_URL" | grep -oP '(?<=id=)[a-zA-Z0-9_-]+' | head -n 1)
-            fi
+            [ -z "$TARGET_ID" ] && TARGET_ID=$(echo "$RAW_URL" | grep -oP '(?<=id=)[a-zA-Z0-9_-]+' | head -n 1)
           else
             TARGET_KIND="FILE"
             TARGET_ID=$(echo "$CLEAN_URL" | grep -oP '(?<=\/d\/)[a-zA-Z0-9_-]+' | head -n 1)
-            if [ -z "$TARGET_ID" ]; then
-              TARGET_ID=$(echo "$RAW_URL" | grep -oP '(?<=id=)[a-zA-Z0-9_-]+' | head -n 1)
-            fi
+            [ -z "$TARGET_ID" ] && TARGET_ID=$(echo "$RAW_URL" | grep -oP '(?<=id=)[a-zA-Z0-9_-]+' | head -n 1)
           fi
 
           echo "🔍 Loại nguồn: $TARGET_KIND"
@@ -62,20 +67,42 @@ jobs:
             exit 1
           fi
 
-          # 2. Thực hiện copy server-side
+          # Xử lý theo Folder hay File
           if [ "$TARGET_KIND" = "FOLDER" ]; then
-            echo "⚡ Đang clone toàn bộ thư mục bằng Server-side..."
+            echo "⚡ Thực hiện Server-Side Clone thư mục..."
             rclone copy ":drive,root_folder_id=${TARGET_ID}:" "gdrive:${DEST}" \
               --drive-server-side-across-configs \
               --drive-acknowledge-abuse \
               --progress \
               --transfers 8
           else
-            echo "⚡ Đang copy trực tiếp file qua ID (backend copyid)..."
-            rclone backend copyid gdrive: "$TARGET_ID" "${DEST}/"
+            echo "⚡ Kiểm tra khả năng Server-side copy file..."
+            COPIED=0
+            if rclone backend copyid gdrive: "$TARGET_ID" "${DEST}/" 2>/dev/null; then
+              echo "✅ Đã copy Server-side trực tiếp thành công!"
+              COPIED=1
+            else
+              echo "⚠️ Server-side trực tiếp bị Google chặn (File public chưa được thêm vào Drive cá nhân)."
+              echo "🚀 Chuyển sang tải trực tiếp tốc độ cao và upload ngay sang Drive đích..."
+              mkdir -p temp_transfer
+              cd temp_transfer
+
+              aria2c --header="User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+                     --check-certificate=false \
+                     --allow-overwrite=true \
+                     --auto-file-renaming=false \
+                     --content-disposition \
+                     $COOKIE_OPT \
+                     -s16 -x16 -j16 \
+                     "https://drive.google.com/uc?export=download&id=${TARGET_ID}"
+
+              cd ..
+              rclone copy ./temp_transfer "gdrive:${DEST}" --progress --drive-chunk-size 64M --transfers 4
+              rm -rf ./temp_transfer
+              echo "✅ Tải và đưa lên Drive thành công!"
+            fi
           fi
 
-          echo "✅ Sao chép Server-Side hoàn tất thành công!"
           DEST_LINK=$(rclone link "gdrive:${DEST}" 2>/dev/null || echo "")
           echo "DEST_LINK=${DEST_LINK}" >> $GITHUB_ENV
 
@@ -84,20 +111,17 @@ jobs:
         run: |
           if [ "${{ job.status }}" == "success" ]; then
             {
-              echo "### ✅ Server-Side Clone Thành Công"
+              echo "### ✅ Hoàn tất sao chép sang Google Drive"
               echo ""
               echo "- **Nguồn:** [${{ github.event.inputs.source_url }}](${{ github.event.inputs.source_url }})"
-              echo "- **Thư mục lưu:** \`${{ github.event.inputs.dest_folder }}\`"
+              echo "- **Thư mục lưu trữ:** \`${{ github.event.inputs.dest_folder }}\`"
               if [ -n "${DEST_LINK:-}" ]; then
-                echo "- **Google Drive Link:** [Mở thư mục trên Drive](${DEST_LINK})"
+                echo "- **Google Drive:** [Mở thư mục đích](${DEST_LINK})"
               fi
-              echo "- *Tất cả file đã được sao chép trực tiếp nội bộ giữa các máy chủ Google.*"
             } >> $GITHUB_STEP_SUMMARY
           else
             {
-              echo "### ❌ Clone Thất Bại"
-              echo ""
-              echo "- **Nguồn:** [${{ github.event.inputs.source_url }}](${{ github.event.inputs.source_url }})"
-              echo "- Vui lòng kiểm tra lại quyền truy cập hoặc cấu hình \`RCLONE_CONFIG\`."
+              echo "### ❌ Thao tác thất bại"
+              echo "- Vui lòng kiểm tra lại log chi tiết hoặc quyền truy cập của link nguồn."
             } >> $GITHUB_STEP_SUMMARY
           fi
