@@ -70,27 +70,34 @@ jobs:
           # 1. Google Drive
           if echo "$RAW_URL" | grep -qE "drive\.google\.com|drive\.usercontent\.google\.com"; then
             echo "📦 Nhận diện nguồn: Google Drive"
-            CLEAN_URL=$(echo "$RAW_URL" | sed 's/\/mobile//g')
+            
+            # Làm sạch URL bỏ đuôi query parameter và path mobile
+            CLEAN_URL=$(echo "$RAW_URL" | sed 's/\/mobile//g' | cut -d'?' -f1)
 
             # Link là Folder
-            if echo "$CLEAN_URL" | grep -qE "folders\/|folder"; then
-              FOLDER_ID=$(echo "$CLEAN_URL" \vert{} grep -oP 'folders\/\K[a-zA-Z0-9_-]+' \vert{}\vert{} echo "$CLEAN_URL" | grep -oP 'id=\K[a-zA-Z0-9_-]+' | head -n 1)
-              echo "📂 Phát hiện Thư mục (Folder ID: $FOLDER_ID)"
+            if echo "$RAW_URL" | grep -qE "folders\/|folder"; then
+              FOLDER_ID=$(echo "$CLEAN_URL" | grep -oP 'folders\/\K[a-zA-Z0-9_-]+' || echo "$RAW_URL" | grep -oP 'id=\K[a-zA-Z0-9_-]+' | head -n 1)
+              echo "📂 ID Thư mục chính xác: $FOLDER_ID"
+              
               DOWNLOAD_SUCCESS=0
 
               if [ "$HAS_RCLONE" -eq 1 ]; then
-                echo "🚀 Tải folder qua Rclone giữ nguyên cấu trúc..."
-                if rclone copy "gdrive,root_folder_id=${FOLDER_ID}:" ./target_payload \
-                    --drive-shared-with-me=false \
+                echo "🚀 Tải chính xác duy nhất Folder qua Rclone..."
+                # Dùng cờ --drive-root-folder-id để khóa chặt phạm vi chỉ trong folder này
+                if rclone copy "gdrive:" ./target_payload \
+                    --drive-root-folder-id="$FOLDER_ID" \
+                    --drive-shared-with-me \
                     --progress --transfers 8; then
                   DOWNLOAD_SUCCESS=1
                 fi
               fi
 
+              # Fallback gdown nếu Rclone không có config hoặc thất bại
               if [ "$DOWNLOAD_SUCCESS" -eq 0 ]; then
                 echo "⚡ Chuyển sang tải folder bằng gdown..."
                 gdown --folder "https://drive.google.com/drive/folders/${FOLDER_ID}" -O ./target_payload $COOKIE_OPT || true
               fi
+
 
             # Link là File đơn lẻ
             else
