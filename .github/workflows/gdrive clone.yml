@@ -40,13 +40,18 @@ jobs:
           DEST="${{ github.event.inputs.dest_folder }}"
           CLEAN_URL=$(echo "$RAW_URL" | sed 's/\/mobile//g' | cut -d'?' -f1)
 
-          # 1. Kiểm tra URL là Thư mục (Folder) hay File đơn lẻ
           if echo "$RAW_URL" | grep -qE "folders\/|folder"; then
             TARGET_KIND="FOLDER"
-            TARGET_ID=$(echo "$CLEAN_URL" \vert{} grep -oP 'folders\/\K[a-zA-Z0-9_-]+' \vert{}\vert{} echo "$RAW_URL" | grep -oP 'id=\K[a-zA-Z0-9_-]+' | head -n 1)
+            TARGET_ID=$(echo "$CLEAN_URL" | grep -oP '(?<=folders\/)[a-zA-Z0-9_-]+' | head -n 1)
+            if [ -z "$TARGET_ID" ]; then
+              TARGET_ID=$(echo "$RAW_URL" | grep -oP '(?<=id=)[a-zA-Z0-9_-]+' | head -n 1)
+            fi
           else
             TARGET_KIND="FILE"
-            TARGET_ID=$(echo "$CLEAN_URL" \vert{} grep -oP '\/d\/\K[a-zA-Z0-9_-]+' \vert{}\vert{} echo "$RAW_URL" | grep -oP 'id=\K[a-zA-Z0-9_-]+' | head -n 1)
+            TARGET_ID=$(echo "$CLEAN_URL" | grep -oP '(?<=\/d\/)[a-zA-Z0-9_-]+' | head -n 1)
+            if [ -z "$TARGET_ID" ]; then
+              TARGET_ID=$(echo "$RAW_URL" | grep -oP '(?<=id=)[a-zA-Z0-9_-]+' | head -n 1)
+            fi
           fi
 
           echo "🔍 Loại nguồn: $TARGET_KIND"
@@ -57,10 +62,9 @@ jobs:
             exit 1
           fi
 
-          # 2. Thực hiện copy ngầm trên server Google
+          # 2. Thực hiện copy server-side
           if [ "$TARGET_KIND" = "FOLDER" ]; then
             echo "⚡ Đang clone toàn bộ thư mục bằng Server-side..."
-            # Sử dụng remote tạm trỏ vào root_folder_id và bật cờ server-side
             rclone copy ":drive,root_folder_id=${TARGET_ID}:" "gdrive:${DEST}" \
               --drive-server-side-across-configs \
               --drive-acknowledge-abuse \
@@ -68,7 +72,6 @@ jobs:
               --transfers 8
           else
             echo "⚡ Đang copy trực tiếp file qua ID (backend copyid)..."
-            # Lệnh copyid copy thẳng file về thư mục đích mà không qua máy runner
             rclone backend copyid gdrive: "$TARGET_ID" "${DEST}/"
           fi
 
