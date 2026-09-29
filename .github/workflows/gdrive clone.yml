@@ -49,27 +49,17 @@ jobs:
           RAW_URL="${{ github.event.inputs.source_url }}"
           DEST="${{ github.event.inputs.dest_folder }}"
 
-          # 1. Trích xuất ID nguồn không dùng regex pipe
-          CLEAN_URL="${RAW_URL%%\?*}"
-          CLEAN_URL="${CLEAN_URL%%/view*}"
-          CLEAN_URL="${CLEAN_URL%%/edit*}"
-          CLEAN_URL="${CLEAN_URL%%/mobile*}"
-          TARGET_ID="${CLEAN_URL##*/}"
-          TARGET_ID="${TARGET_ID##*id=}"
-          TARGET_ID=$(echo "$TARGET_ID" | tr -d ' \n\r')
-
-          case "$RAW_URL" in
-            *folder*) TARGET_KIND="FOLDER" ;;
-            *)        TARGET_KIND="FILE" ;;
-          esac
-
-          echo "🔍 Loại nguồn: $TARGET_KIND"
-          echo "📂 Drive ID nguồn: $TARGET_ID"
-
-          if [ -z "$TARGET_ID" ]; then
-            echo "❌ Không trích xuất được Google Drive ID hợp lệ!"
-            exit 1
+          # Trích xuất ID hỗ trợ cả dạng uc?id=... lẫn /file/d/.../view
+          if echo "$RAW_URL" | grep -q "id="; then
+            TARGET_ID=$(echo "$RAW_URL" | sed -n 's/.*[?&]id=\([^&#]*\).*/\1/p')
+          elif echo "$RAW_URL" | grep -q "/d/"; then
+            TARGET_ID=$(echo "$RAW_URL" | sed -n 's/.*\/d\/\([^/?&#]*\).*/\1/p')
+          elif echo "$RAW_URL" | grep -q "/folders/"; then
+            TARGET_ID=$(echo "$RAW_URL" | sed -n 's/.*\/folders\/\([^/?&#]*\).*/\1/p')
+          else
+            TARGET_ID="${RAW_URL##*/}"
           fi
+          TARGET_ID=$(echo "$TARGET_ID" | tr -d ' \n\r')
 
           # Tạo thư mục đích và lấy ID thư mục
           rclone mkdir "gdrive:${DEST}"
@@ -93,18 +83,21 @@ jobs:
               METHOD_USED="Server-Side Direct (Folder)"
             fi
           else
-            OPT_ARG=""
+            OPT_ARG=()
             if [ -n "$DEST_DIR_ID" ]; then
-              OPT_ARG="-o dst-dir-id=${DEST_DIR_ID}"
+              OPT_ARG=(-o "dst-dir-id=${DEST_DIR_ID}")
             fi
 
-            rclone backend copyid gdrive: $OPT_ARG "$TARGET_ID" > copy.log 2>&1 || true
-            cat copy.log
-            if ! grep -qi "error" copy.log; then
+            # copyid nhận: gdrive: <src-id> [new-name] -o ...
+            if rclone backend copyid gdrive: "$TARGET_ID" "${OPT_ARG[@]}" > copy.log 2>&1; then
               COPIED_SUCCESS=1
               METHOD_USED="Server-Side Direct (File)"
+            else
+              cat copy.log
+              COPIED_SUCCESS=0
             fi
           fi
+
 
           # 3. Fallback sang gdown/aria2c nếu Server-Side không hỗ trợ
           if [ "$COPIED_SUCCESS" -eq 1 ]; then
