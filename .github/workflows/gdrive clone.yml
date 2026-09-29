@@ -18,10 +18,10 @@ jobs:
 
     steps:
       - name: Install Tools
-        run: |
-          sudo apt update
-          sudo apt install -y aria2 curl jq
-          curl https://rclone.org/install.sh | sudo bash
+        run: >
+          sudo apt update &&
+          sudo apt install -y aria2 curl jq &&
+          curl -s https://rclone.org/install.sh | sudo bash &&
           pip3 install --no-cache-dir gdown
 
       - name: Clone / Copy to Google Drive
@@ -49,14 +49,19 @@ jobs:
           RAW_URL="${{ github.event.inputs.source_url }}"
           DEST="${{ github.event.inputs.dest_folder }}"
 
-          # 1. Trích xuất ID nguồn
-          TARGET_ID=$(echo "$RAW_URL" | sed -E 's/.*(\/d\/|folders\/|id=)//; s/[/?&].*//' | tr -d ' \n\r')
+          # 1. Trích xuất ID nguồn không dùng regex pipe
+          CLEAN_URL="${RAW_URL%%\?*}"
+          CLEAN_URL="${CLEAN_URL%%/view*}"
+          CLEAN_URL="${CLEAN_URL%%/edit*}"
+          CLEAN_URL="${CLEAN_URL%%/mobile*}"
+          TARGET_ID="${CLEAN_URL##*/}"
+          TARGET_ID="${TARGET_ID##*id=}"
+          TARGET_ID=$(echo "$TARGET_ID" | tr -d ' \n\r')
 
-          if echo "$RAW_URL" | grep -qE "folders\/|folder"; then
-            TARGET_KIND="FOLDER"
-          else
-            TARGET_KIND="FILE"
-          fi
+          case "$RAW_URL" in
+            *folder*) TARGET_KIND="FOLDER" ;;
+            *)        TARGET_KIND="FILE" ;;
+          esac
 
           echo "🔍 Loại nguồn: $TARGET_KIND"
           echo "📂 Drive ID nguồn: $TARGET_ID"
@@ -66,19 +71,19 @@ jobs:
             exit 1
           fi
 
-          # Tạo thư mục đích nếu chưa có và lấy Folder ID của đích
+          # Tạo thư mục đích và lấy ID thư mục
           rclone mkdir "gdrive:${DEST}"
-          DEST_DIR_ID=$(rclone backend fileid gdrive: "${DEST}" 2>/dev/null | tr -d ' \n\r' || echo "")
-          echo "📂 Folder ID đích (${DEST}):$DEST_DIR_ID"
+          DEST_DIR_ID=$(rclone lsf "gdrive:" --dirs-only --format "i" --include "${DEST}/" 2>/dev/null | head -n 1)
+          if [ -z "$DEST_DIR_ID" ]; then
+            DEST_DIR_ID=$(rclone backend fileid gdrive: "${DEST}" 2>/dev/null | tr -d ' \n\r')
+          fi
+          echo "📂 Folder ID đích (${DEST}):${DEST_DIR_ID:-'Root'}"
 
           COPIED_SUCCESS=0
 
-          # 2. Xử lý sao chép (Server-Side Copy có xác thực token)
-          COPIED_SUCCESS=0
-
+          # 2. Xử lý sao chép Server-Side
           echo "⚡ [Cách 1] Đang thử nhân bản trực tiếp bằng Server-Side..."
           if [ "$TARGET_KIND" = "FOLDER" ]; then
-            # Dùng cấu hình gdrive đã đăng nhập, trỏ root_folder_id vào thư mục nguồn
             if rclone copy "gdrive,root_folder_id=${TARGET_ID}:" "gdrive:${DEST}" \
                 --drive-server-side-across-configs \
                 --drive-acknowledge-abuse \
@@ -88,26 +93,24 @@ jobs:
               METHOD_USED="Server-Side Direct (Folder)"
             fi
           else
-            # Thử cách 1: Sao chép File ID trực tiếp bằng token của gdrive
-            if [ -n "$DEST_DIR_ID" ] && rclone backend copyid gdrive: "$TARGET_ID" "$DEST_DIR_ID"; then
+            OPT_ARG=""
+            if [ -n "$DEST_DIR_ID" ]; then
+              OPT_ARG="-o dst-dir-id=${DEST_DIR_ID}"
+            fi
+
+            rclone backend copyid gdrive: $OPT_ARG "$TARGET_ID" > copy.log 2>&1 || true
+            cat copy.log
+            if ! grep -qi "error" copy.log; then
               COPIED_SUCCESS=1
               METHOD_USED="Server-Side Direct (File)"
-            # Thử cách 2: Mượn token của gdrive kèm root_folder_id nguồn
-            elif rclone copy "gdrive,root_folder_id=${TARGET_ID}:" "gdrive:${DEST}" \
-                --drive-server-side-across-configs \
-                --drive-acknowledge-abuse \
-                --progress; then
-              COPIED_SUCCESS=1
-              METHOD_USED="Server-Side Direct (File Root)"
             fi
           fi
 
-
-          # 3. Bước 2: Fallback sang gdown/aria2c nếu Server-Side không thành công
+          # 3. Fallback sang gdown/aria2c nếu Server-Side không hỗ trợ
           if [ "$COPIED_SUCCESS" -eq 1 ]; then
             echo "🎉 Server-Side Copy thành công!"
           else
-            echo "⚠️ Server-Side không khả dụng. Chuyển sang tải về máy ảo bằng gdown/aria2c..."
+            echo "⚠️ Chuyển sang tải về máy ảo bằng gdown/aria2c..."
             METHOD_USED="gdown Download & Upload"
             mkdir -p temp_transfer
 
@@ -122,7 +125,7 @@ jobs:
                      --auto-file-renaming=false \
                      --content-disposition \
                      -s16 -x16 -j16 \
-                     "https://drive.google.com/uc?export=download&id=${TARGET_ID}"
+                     "https://drive.google.com/uc?export=download&id=${TARGET_ID}" || true
               cd ..
             fi
 
@@ -136,47 +139,44 @@ jobs:
             rm -rf ./temp_transfer
           fi
 
-          # 4. Trích xuất thông tin chi tiết các file trong thư mục đích
-          DEST_LINK=$(rclone link "gdrive:${DEST}" 2>/dev/null || echo "")
-          DEST_FILES_JSON=$(rclone lsjson "gdrive:${DEST}" 2>/dev/null || echo "[]")
+          # 4. Trích xuất thông tin chi tiết
+          set +e
+          DEST_LINK=$(rclone link "gdrive:${DEST}" 2>/dev/null)
+          rclone lsjson "gdrive:${DEST}" > dest_files.json 2>/dev/null
 
-          # File mới nhất vừa được thêm vào
-          LATEST_FILE_NAME=$(echo "$DEST_FILES_JSON" | jq -r 'sort_by(.ModTime) | reverse | .[0].Name // "N/A"')
-          LATEST_BYTES=$(echo "$DEST_FILES_JSON" | jq -r 'sort_by(.ModTime) | reverse | .[0].Size // empty')
+          SRC_NAME=$(jq -r 'sort_by(.ModTime) | reverse | .[0].Name // "N/A"' dest_files.json)
+          LATEST_BYTES=$(jq -r 'sort_by(.ModTime) | reverse | .[0].Size // empty' dest_files.json)
+          
           if [ -n "$LATEST_BYTES" ] && [ "$LATEST_BYTES" -ge 0 ] 2>/dev/null; then
-            SRC_SIZE=$(numfmt --to=iec-i --suffix=B --format="%.2f" "$LATEST_BYTES" 2>/dev/null \vert{}\vert{} echo "${LATEST_BYTES} B")
+            SRC_SIZE=$(numfmt --to=iec-i --suffix=B --format="\%.2f" "$LATEST_BYTES" 2>/dev/null)
           else
             SRC_SIZE="N/A"
           fi
-          SRC_NAME="$LATEST_FILE_NAME"
 
-          # Tạo bảng hiển thị file
-          OUTPUT_TABLE="| Tên File | Dung Lượng | Liên Kết |\n| :--- | :--- | :--- |\n"
-          while IFS= read -r item; do
-            [ -z "$item" ] && continue
-            FNAME=$(echo "$item" | jq -r '.Name')
-            FSIZE_B=$(echo "$item" | jq -r '.Size')
-            FSIZE=$(numfmt --to=iec-i --suffix=B --format="%.2f" "$FSIZE_B" 2>/dev/null \vert{}\vert{} echo "${FSIZE_B} B")
-            FID=$(rclone backend fileid gdrive: "${DEST}/${FNAME}" 2>/dev/null | tr -d ' \n\r' || echo "")
-            
-            if [ -n "$FID" ]; then
-              FLINK="https://drive.google.com/file/d/${FID}/view?usp=sharing"
-              OUTPUT_TABLE="${OUTPUT_TABLE}| \`${FNAME}\` | ${FSIZE} \vert{} [👉 Mở file](${FLINK}) |\n"
-            else
-              OUTPUT_TABLE="${OUTPUT_TABLE}| \`${FNAME}\` | ${FSIZE} | N/A |\n"
-            fi
-          done < <(echo "$DEST_FILES_JSON" | jq -c '.[]')
+          OUTPUT_FILE="summary_output.md"
+          > "$OUTPUT_FILE"
 
-          # Đưa vào môi trường tóm tắt
+          ITEMS_COUNT=$(jq 'length' dest_files.json 2>/dev/null || echo 0)
+          if [ "$ITEMS_COUNT" -gt 0 ]; then
+            for i in $(seq 0$((ITEMS_COUNT - 1))); do
+              FNAME=$(jq -r ".[$i].Name" dest_files.json)
+              FSIZE_B=$(jq -r ".[$i].Size" dest_files.json)
+              FSIZE=$(numfmt --to=iec-i --suffix=B --format="\%.2f" "$FSIZE_B" 2>/dev/null)
+              FID=$(rclone backend fileid gdrive: "${DEST}/${FNAME}" 2>/dev/null | tr -d ' \n\r')
+              
+              if [ -n "$FID" ]; then
+                echo "- 📄 **${FNAME}** (${FSIZE}) - [👉 Mở file trên Drive](https://drive.google.com/file/d/${FID}/view?usp=sharing)" >> "$OUTPUT_FILE"
+              else
+                echo "- 📄 **${FNAME}** (${FSIZE})" >> "$OUTPUT_FILE"
+              fi
+            done
+          fi
+
           echo "SRC_NAME=${SRC_NAME}" >> $GITHUB_ENV
           echo "SRC_SIZE=${SRC_SIZE}" >> $GITHUB_ENV
           echo "DEST_LINK=${DEST_LINK}" >> $GITHUB_ENV
           echo "METHOD_USED=${METHOD_USED}" >> $GITHUB_ENV
-          {
-            echo "OUTPUT_TABLE<<EOF"
-            echo -e "$OUTPUT_TABLE"
-            echo "EOF"
-          } >> $GITHUB_ENV
+          set -e
 
       - name: Workflow Summary
         if: always()
@@ -187,18 +187,18 @@ jobs:
               echo ""
               echo "#### 📥 Nguồn (Input):"
               echo "- **URL nguồn:** [${{ github.event.inputs.source_url }}](${{ github.event.inputs.source_url }})"
-              echo "- **Tên file nhận diện:** \`${SRC_NAME}\`"
+              echo "- **Tên file gần nhất:** \`${SRC_NAME}\`"
               echo "- **Dung lượng:** \`${SRC_SIZE}\`"
               echo "- **Phương thức áp dụng:** \`${METHOD_USED}\`"
               echo ""
               echo "#### 📤 Đích đến (Output):"
               echo "- **Thư mục lưu trữ:** \`${{ github.event.inputs.dest_folder }}\`"
               if [ -n "${DEST_LINK:-}" ]; then
-                echo "- **Link thư mục Drive:** [Mở thư mục đích](${DEST_LINK})"
+                echo "- **Link thư mục:** [Mở thư mục đích](${DEST_LINK})"
               fi
               echo ""
-              echo "##### 📄 Chi tiết file:"
-              echo -e "${OUTPUT_TABLE}"
+              echo "##### 📄 Danh sách file tải lên:"
+              cat summary_output.md 2>/dev/null || echo "Không có file nào."
             } >> $GITHUB_STEP_SUMMARY
           else
             {
