@@ -23,89 +23,94 @@ jobs:
           sudo apt install -y python3-pip aria2 wget curl
           pip3 install --no-cache-dir gdown internetarchive huggingface_hub
 
-      - name: Download file (Multi-host support)
+      - name: Download file / folder (Multi-host support)
+        env:
+          GDRIVE_COOKIES: ${{ secrets.GDRIVE_COOKIES }}
+          RCLONE_CONFIG_DATA: ${{ secrets.RCLONE_CONFIG }}
         run: |
-          echo "🔽 Bắt đầu tải file..."
-
+          echo "🔽 Bắt đầu xử lý..."
           RAW_URL="${{ github.event.inputs.file_url }}"
-          echo "Link nguồn: $RAW_URL"
           USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
-          # 1. Google Drive
-          if echo "$RAW_URL" | grep -q "drive.google.com"; then
-            echo "📦 Nhận diện nguồn: Google Drive"
+          # Thiết lập cookie nếu có
+          COOKIE_OPT=""
+          if [ -n "${GDRIVE_COOKIES:-}" ]; then
+            echo "🔑 Đã tìm thấy cookie Google Drive..."
+            echo "$GDRIVE_COOKIES" > cookies.txt
+            COOKIE_OPT="--cookies cookies.txt"
+          fi
 
-            FILE_ID=$(echo "$RAW_URL" | sed -E 's#.*/d/([^/]+).*#\1#')
-            if [ "$FILE_ID" = "$RAW_URL" ]; then
-              FILE_ID=$(echo "$RAW_URL" | sed -E 's/.*id=([^&]+).*/\1/')
-            fi
+          # Thiết lập Rclone nếu có
+          if [ -n "${RCLONE_CONFIG_DATA:-}" ]; then
+            mkdir -p ~/.config/rclone
+            echo "$RCLONE_CONFIG_DATA" > ~/.config/rclone/rclone.conf
+          fi
 
-            if [ -z "$FILE_ID" ] || [ "$FILE_ID" = "$RAW_URL" ]; then
-              echo "❌ Không trích xuất được ID Google Drive!"
-              exit 1
+          # 1. Xử lý Google Drive
+          if echo "$RAW_URL" | grep -qE "drive\.google\.com|drive\.usercontent\.google\.com"; then
+            echo "📦 Nhận diện: Google Drive"
+
+            # Kiểm tra nếu là FOLDER
+            if echo "$RAW_URL" | grep -q "/folders/"; then
+              FOLDER_ID=$(echo "$RAW_URL" | grep -oP 'folders\/\K[a-zA-Z0-9_-]+')
+              echo "📂 Phát hiện Thư mục (Folder ID: $FOLDER_ID)"
+              
+              # Dùng Rclone tải thẳng toàn bộ Folder về runner
+              rclone copy "gdrive,root_folder_id=${FOLDER_ID}:" ./downloaded_folder --progress --transfers 4
+              
+              # Nén lại thành 1 file zip để upload lên HuggingFace / Archive.org
+              FILE_NAME="Drive_Folder_${FOLDER_ID}.zip"
+              zip -r "$FILE_NAME" ./downloaded_folder
+              rm -rf ./downloaded_folder
+
+            # Xử lý FILE đơn lẻ
+            else
+              FILE_ID=$(echo "$RAW_URL" | grep -oP '(id=|\/d\/)\K[a-zA-Z0-9_-]+' | head -n 1)
+              echo "📄 File ID: $FILE_ID"
+
+              # Cách A: Thử copy trực tiếp bằng Rclone (Server-side bypass quota)
+              if [ -f ~/.config/rclone/rclone.conf ]; then
+                echo "🚀 Thử clone trực tiếp qua Rclone copyid..."
+                rclone backend copyid gdrive: "$FILE_ID" "./" || true
+              fi
+
+              # Cách B: Nếu chưa tải được thì dùng gdown kèm Cookie
+              if [ -z "$(ls -A | grep -v 'cookies.txt')" ]; then
+                echo "⚡ Chạy gdown với cookie..."
+                gdown "https://drive.google.com/uc?id=${FILE_ID}" $COOKIE_OPT || \
+                aria2c --header="User-Agent: $USER_AGENT" \
+                       --check-certificate=false \
+                       --allow-overwrite=true \
+                       --auto-file-renaming=false \
+                       --content-disposition \
+                       -s16 -x16 -j16 \
+                       "$RAW_URL"
+              fi
             fi
-            # Xử lý Cookie để vượt giới hạn Quota (nếu có cấu hình GDRIVE_COOKIES trong Secrets)
-            COOKIE_OPT=""
-            if [ -n "${GDRIVE_COOKIES:-}" ]; then
-              echo "🔑 Đã tìm thấy cookie Google Drive, kích hoạt vượt hạn ngạch tải..."
-              echo "$GDRIVE_COOKIES" > cookies.txt
-              COOKIE_OPT="--cookies cookies.txt"
-            fi
-            
-              # Thử tải bằng gdown với link uc chuẩn
-              gdown "https://drive.google.com/uc?id=${FILE_ID}" || \
-              # # Tải file bằng gdown kèm cookie nếu có
-            #gdown "https://drive.google.com/uc?id=${FILE_ID}" $COOKIE_OPT
 
           # 2. Pixeldrain
           elif echo "$RAW_URL" | grep -q "pixeldrain.com"; then
-            echo "📦 Nhận diện nguồn: Pixeldrain"
-
+            echo "📦 Nhận diện: Pixeldrain"
             PIXEL_ID=$(echo "$RAW_URL" | grep -oP '(u\/|file\/)\K[a-zA-Z0-9]+')
-            if [ -z "$PIXEL_ID" ]; then
-              echo "❌ Không trích xuất được Pixeldrain ID!"
-              exit 1
-            fi
-
             DIRECT_PIXEL="https://pixeldrain.com/api/file/${PIXEL_ID}"
-            aria2c --header="User-Agent: $USER_AGENT" \
-                   --check-certificate=false \
-                   --allow-overwrite=true \
-                   --auto-file-renaming=false \
-                   --content-disposition \
-                   --summary-interval=1 \
-                   -s16 -x16 -j16 \
-                   "$DIRECT_PIXEL"
+            aria2c --header="User-Agent: $USER_AGENT" -s16 -x16 -j16 "$DIRECT_PIXEL"
 
           # 3. Direct Link
           else
-            echo "🌐 Nhận diện nguồn: Direct Link"
+            echo "🌐 Nhận diện: Direct Link"
             wget -c --progress=bar:force:noscroll --content-disposition "$RAW_URL"
           fi
 
-          echo "📂 Danh sách file sau khi tải:"
+          echo "📂 File sau khi xử lý:"
           ls -lh
 
-          # Lấy file vừa tải có dung lượng lớn nhất
-          FILE_NAME=$(ls -S | head -n 1)
+          # Lấy file lớn nhất trong thư mục (loại trừ các file config, txt)
+          FILE_NAME=$(ls -S | grep -vE '\.txt$|\.yml$' | head -n 1)
+          FILE_SIZE=$(stat -c%s "$FILE_NAME")
 
-          if [ -z "$FILE_NAME" ]; then
-            echo "❌ Không tìm thấy file hợp lệ sau khi tải!"
-            exit 1
-          fi
-
-          FILE_SIZE=$(stat -c\%s "$FILE_NAME")
-          echo "📏 Dung lượng: $FILE_SIZE bytes"
-
-          if [ "$FILE_SIZE" -lt 104857600 ]; then
-            echo "❌ File quá nhỏ (< 100MB), có thể link đã bị giới hạn hoặc tải lỗi."
-            exit 1
-          fi
-
-          echo "🎉 Đã hoàn thành 100% quá trình tải về máy chủ Runner!"
           echo "FILE_NAME=$FILE_NAME" >> $GITHUB_ENV
           echo "FILE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
-          echo "✅ Sẵn sàng file: $FILE_NAME"
+          echo "✅ Sẵn sàng upload: $FILE_NAME ($FILE_SIZE bytes)"
 
       - name: Upload to Archive.org
         continue-on-error: true

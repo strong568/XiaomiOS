@@ -29,47 +29,73 @@ jobs:
           pip3 install --no-cache-dir --break-system-packages gdown internetarchive huggingface_hub
 
 
-      - name: Download file (Multi-host support)
+      - name: Download file / folder (Multi-host support)
+        env:
+          GDRIVE_COOKIES: ${{ secrets.GDRIVE_COOKIES }}
+          RCLONE_CONFIG_DATA: ${{ secrets.RCLONE_CONFIG }}
         run: |
-          echo "🔽 Bắt đầu tải file..."
-
+          echo "🔽 Bắt đầu xử lý..."
           RAW_URL="${{ github.event.inputs.file_url }}"
-          echo "Link nguồn: $RAW_URL"
           USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
-          # 1. Google Drive (Hỗ trợ drive.google.com và drive.usercontent.google.com)
+          # Thiết lập cookie nếu có
+          COOKIE_OPT=""
+          if [ -n "${GDRIVE_COOKIES:-}" ]; then
+            echo "🔑 Đã tìm thấy cookie Google Drive..."
+            echo "$GDRIVE_COOKIES" > cookies.txt
+            COOKIE_OPT="--cookies cookies.txt"
+          fi
+
+          # Thiết lập Rclone nếu có
+          if [ -n "${RCLONE_CONFIG_DATA:-}" ]; then
+            mkdir -p ~/.config/rclone
+            echo "$RCLONE_CONFIG_DATA" > ~/.config/rclone/rclone.conf
+          fi
+
+          # 1. Xử lý Google Drive
           if echo "$RAW_URL" | grep -qE "drive\.google\.com|drive\.usercontent\.google\.com"; then
-            echo "📦 Nhận diện nguồn: Google Drive"
+            echo "📦 Nhận diện: Google Drive"
 
-            FILE_ID=$(echo "$RAW_URL" | grep -oP '(id=|\/d\/)\K[a-zA-Z0-9_-]+' | head -n 1)
+            # Kiểm tra nếu là FOLDER
+            if echo "$RAW_URL" | grep -q "/folders/"; then
+              FOLDER_ID=$(echo "$RAW_URL" | grep -oP 'folders\/\K[a-zA-Z0-9_-]+')
+              echo "📂 Phát hiện Thư mục (Folder ID: $FOLDER_ID)"
+              
+              # Dùng Rclone tải thẳng toàn bộ Folder về runner
+              rclone copy "gdrive,root_folder_id=${FOLDER_ID}:" ./downloaded_folder --progress --transfers 4
+              
+              # Nén lại thành 1 file zip để upload lên HuggingFace / Archive.org
+              FILE_NAME="Drive_Folder_${FOLDER_ID}.zip"
+              zip -r "$FILE_NAME" ./downloaded_folder
+              rm -rf ./downloaded_folder
 
-            if [ -n "$FILE_ID" ]; then
-              echo "Trích xuất thành công File ID: $FILE_ID"
-              COOKIE_OPT=""
-              if [ -n "${GDRIVE_COOKIES:-}" ]; then
-                echo "🔑 Đã tìm thấy cookie Google Drive, kích hoạt vượt hạn ngạch tải..."
-                echo "$GDRIVE_COOKIES" > cookies.txt
-                COOKIE_OPT="--cookies cookies.txt"
-              fi
-            
-              gdown "https://drive.google.com/uc?id=${FILE_ID}" $COOKIE_OPT || \
-              aria2c --header="User-Agent: $USER_AGENT" \
-                     --check-certificate=false \
-                     --allow-overwrite=true \
-                     --auto-file-renaming=false \
-                     --content-disposition \
-                     -s16 -x16 -j16 \
-                     "$RAW_URL"
+            # Xử lý FILE đơn lẻ
             else
-              echo "⚠️ Không bóc tách được ID, thử tải trực tiếp URL..."
-              aria2c --header="User-Agent: $USER_AGENT" \
-                     --check-certificate=false \
-                     --allow-overwrite=true \
-                     --auto-file-renaming=false \
-                     --content-disposition \
-                     -s16 -x16 -j16 \
-                     "$RAW_URL"
+              FILE_ID=$(echo "$RAW_URL" | grep -oP '(id=|\/d\/)\K[a-zA-Z0-9_-]+' | head -n 1)
+              echo "📄 File ID: $FILE_ID"
+
+              # Cách A: Thử copy trực tiếp bằng Rclone (Server-side bypass quota)
+              if [ -f ~/.config/rclone/rclone.conf ]; then
+                echo "🚀 Thử clone trực tiếp qua Rclone copyid..."
+                rclone backend copyid gdrive: "$FILE_ID" "./" || true
+              fi
+
+              # Cách B: Nếu chưa tải được thì dùng gdown kèm Cookie
+              if [ -z "$(ls -A | grep -v 'cookies.txt')" ]; then
+                echo "⚡ Chạy gdown với cookie..."
+                gdown "https://drive.google.com/uc?id=${FILE_ID}" $COOKIE_OPT || \
+                aria2c --header="User-Agent: $USER_AGENT" \
+                       --check-certificate=false \
+                       --allow-overwrite=true \
+                       --auto-file-renaming=false \
+                       --content-disposition \
+                       -s16 -x16 -j16 \
+                       "$RAW_URL"
+              fi
             fi
+
+
+
 
           # 2. Pixeldrain
           elif echo "$RAW_URL" | grep -q "pixeldrain.com"; then
