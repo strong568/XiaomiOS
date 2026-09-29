@@ -1,4 +1,4 @@
-name: GDrive Server-Side Direct Clone
+name: GDrive Direct Clone
 
 on:
   workflow_dispatch:
