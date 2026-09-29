@@ -115,18 +115,13 @@ jobs:
             # Upload Hugging Face
             if [ "$UPLOAD_HF" = "true" ] && [ -n "${HF_TOKEN:-}" ]; then
               echo "  ↳ Tải lên Hugging Face..."
-              python3 -c "
-              import os
-              from huggingface_hub import HfApi
-              api = HfApi(token=os.environ.get('HF_TOKEN'))
-              api.upload_file(
-                  path_or_fileobj='$file_path',
-                  path_in_repo='$relative_name',
-                  repo_id='$HF_REPO_NAME',
-                  repo_type='model'
-              )
-              "
+              huggingface-cli upload "$HF_REPO_NAME" \
+                "$file_path" \
+                "$relative_name" \
+                --repo-type model \
+                --token "$HF_TOKEN"
             fi
+
 
             # Upload Archive.org
             if [ "$UPLOAD_IA" = "true" ] && [ -f ~/.config/ia.ini ]; then
