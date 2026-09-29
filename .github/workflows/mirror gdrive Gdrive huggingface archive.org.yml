@@ -77,53 +77,45 @@ jobs:
             # Link là Folder
             if echo "$RAW_URL" | grep -qE "folders\/|folder"; then
               FOLDER_ID=$(echo "$CLEAN_URL" | grep -oP 'folders\/\K[a-zA-Z0-9_-]+' || echo "$RAW_URL" | grep -oP 'id=\K[a-zA-Z0-9_-]+' | head -n 1)
-              echo "📂 ID Thư mục chính xác: $FOLDER_ID"
+              echo "📂 ID Thư mục cần tải: $FOLDER_ID"
               
               DOWNLOAD_SUCCESS=0
 
+              # Cách 1: Dùng rclone với remote tạm thời trỏ thẳng vào root_folder_id (KHÔNG dùng --drive-shared-with-me)
               if [ "$HAS_RCLONE" -eq 1 ]; then
-                echo "🚀 Tải chính xác duy nhất Folder qua Rclone..."
-                # Dùng cờ --drive-root-folder-id để khóa chặt phạm vi chỉ trong folder này
-                if rclone copy "gdrive:" ./target_payload \
-                    --drive-root-folder-id="$FOLDER_ID" \
-                    --drive-shared-with-me \
-                    --progress --transfers 8; then
-                  DOWNLOAD_SUCCESS=1
+                echo "🚀 Tải folder qua Rclone với phạm vi cô lập..."
+                # Tạo một remote ảo tạm thời khóa chặt đúng folder ID đó
+                if rclone copy ":drive,root_folder_id=${FOLDER_ID}:" ./target_payload \
+                    --progress --transfers 4 --drive-acknowledge-abuse; then
+                  # Kiểm tra nếu có file tải về thì thành công
+                  if [ -n "$(ls -A ./target_payload 2>/dev/null)" ]; then
+                    DOWNLOAD_SUCCESS=1
+                  fi
                 fi
               fi
 
-              # Fallback gdown nếu Rclone không có config hoặc thất bại
+              # Cách 2: Fallback sang gdown nếu Rclone không lấy được
               if [ "$DOWNLOAD_SUCCESS" -eq 0 ]; then
                 echo "⚡ Chuyển sang tải folder bằng gdown..."
-                gdown --folder "https://drive.google.com/drive/folders/${FOLDER_ID}" -O ./target_payload $COOKIE_OPT || true
+                gdown --folder "https://drive.google.com/drive/folders/${FOLDER_ID}" -O ./target_payload $COOKIE_OPT --remaining-ok
               fi
-
 
             # Link là File đơn lẻ
             else
               FILE_ID=$(echo "$CLEAN_URL" | grep -oP '(id=|\/d\/)\K[a-zA-Z0-9_-]+' | head -n 1)
               echo "📄 Trích xuất File ID: $FILE_ID"
-              COPIED_BY_RCLONE=0
-
-              if [ "$HAS_RCLONE" -eq 1 ]; then
-                if rclone backend copyid gdrive: "$FILE_ID" "./target_payload/" 2>/dev/null; then
-                  COPIED_BY_RCLONE=1
-                fi
-              fi
-
-              if [ "$COPIED_BY_RCLONE" -eq 0 ]; then
-                cd target_payload
-                gdown "https://drive.google.com/uc?id=${FILE_ID}" $COOKIE_OPT || \
-                aria2c --header="User-Agent: $USER_AGENT" \
-                       --check-certificate=false \
-                       --allow-overwrite=true \
-                       --auto-file-renaming=false \
-                       --content-disposition \
-                       -s16 -x16 -j16 \
-                       "https://drive.google.com/uc?export=download&id=${FILE_ID}"
-                cd ..
-              fi
+              cd target_payload
+              gdown "https://drive.google.com/uc?id=${FILE_ID}" $COOKIE_OPT || \
+              aria2c --header="User-Agent: $USER_AGENT" \
+                     --check-certificate=false \
+                     --allow-overwrite=true \
+                     --auto-file-renaming=false \
+                     --content-disposition \
+                     -s16 -x16 -j16 \
+                     "https://drive.google.com/uc?export=download&id=${FILE_ID}"
+              cd ..
             fi
+
 
           # 2. Pixeldrain
           elif echo "$RAW_URL" | grep -q "pixeldrain.com"; then
