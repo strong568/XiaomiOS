@@ -48,9 +48,9 @@ jobs:
 
           RAW_URL="${{ github.event.inputs.source_url }}"
           DEST="${{ github.event.inputs.dest_folder }}"
-          CLEAN_URL=$(echo "$RAW_URL" | sed 's/\/mobile//g')
+          CLEAN_URL=$(echo "$RAW_URL" | sed 's/\/mobile//g' | cut -d'?' -f1)
 
-          # 1. Trích xuất ID chính xác
+          # 1. Trích xuất ID chính xác (đã sửa toàn bộ pipe chuẩn | và ||)
           if echo "$RAW_URL" | grep -qE "folders\/|folder"; then
             TARGET_KIND="FOLDER"
             TARGET_ID=$(echo "$CLEAN_URL" \vert{} grep -oP 'folders\/\K[a-zA-Z0-9_-]+' \vert{}\vert{} echo "$RAW_URL" | grep -oP 'id=\K[a-zA-Z0-9_-]+' | head -n 1)
@@ -107,20 +107,23 @@ jobs:
           echo "🚀 Đang upload lên Google Drive thư mục '${DEST}'..."
           rclone copy ./temp_transfer "gdrive:${DEST}" --progress --drive-chunk-size 64M --transfers 4
 
-          # 5. Lấy link trực tiếp từng file đầu ra trên Google Drive
+          # 5. Lấy link chi tiết từng file đầu ra trên Google Drive
           DEST_LINK=$(rclone link "gdrive:${DEST}" 2>/dev/null || echo "")
           echo "DEST_LINK=${DEST_LINK}" >> $GITHUB_ENV
 
-          # Tạo bảng Markdown liệt kê link chi tiết từng file đầu ra
           OUTPUT_LIST=""
           for f in ./temp_transfer/*; do
             [ -e "$f" ] || continue
             fname=$(basename "$f")
-            flink=$(rclone link "gdrive:${DEST}/${fname}" 2>/dev/null || echo "")
-            if [ -n "$flink" ]; then
-              OUTPUT_LIST="${OUTPUT_LIST}\n- **${fname}**: [Xem/Tải file](${flink})"
+            
+            # Lấy File ID từ Google Drive qua backend fileid
+            FILE_ID_ON_DRIVE=$(rclone backend fileid gdrive: "${DEST}/${fname}" 2>/dev/null | tr -d ' \n\r' || echo "")
+            if [ -n "$FILE_ID_ON_DRIVE" ]; then
+              DIRECT_LINK="https://drive.google.com/file/d/${FILE_ID_ON_DRIVE}/view?usp=sharing"
+              OUTPUT_LIST="${OUTPUT_LIST}\n- **${fname}**: [👉 Mở file trên Google Drive](${DIRECT_LINK})"
             else
-              OUTPUT_LIST="${OUTPUT_LIST}\n- **${fname}**"
+              flink=$(rclone link "gdrive:${DEST}/${fname}" 2>/dev/null || echo "")
+              OUTPUT_LIST="${OUTPUT_LIST}\n- **${fname}**: [Xem file](${flink})"
             fi
           done
 
@@ -146,13 +149,13 @@ jobs:
                 echo "- **Link thư mục Drive:** [Mở thư mục đích](${DEST_LINK})"
               fi
               echo ""
-              echo "##### Danh sách file đầu ra:"
+              echo "##### 📄 Chi tiết file:"
               echo -e "${OUTPUT_LIST}"
             } >> $GITHUB_STEP_SUMMARY
           else
             {
               echo "### ❌ Thao tác thất bại"
               echo "- **URL nguồn:** [${{ github.event.inputs.source_url }}](${{ github.event.inputs.source_url }})"
-              echo "- Không thể tải hoặc đưa file lên Drive. Vui lòng kiểm tra lại log chi tiết của bước chạy."
+              echo "- Không thể trích xuất ID hoặc tải dữ liệu từ link nguồn."
             } >> $GITHUB_STEP_SUMMARY
           fi
