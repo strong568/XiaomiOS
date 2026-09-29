@@ -43,19 +43,19 @@ jobs:
           RAW_URL="${{ github.event.inputs.source_url }}"
           DEST="${{ github.event.inputs.dest_folder }}"
 
-          # 1. Bóc tách ID chính xác
+          # 1. Trích xuất ID chuẩn (hỗ trợ cả link uc?id=... và /file/d/...)
           if echo "$RAW_URL" | grep -q "id="; then
-            TARGET_ID=$(echo "$RAW_URL" | sed -n 's/.*[?&]id=\([^&#]*\).*/\1/p')
+            TARGET_ID=$(echo "$RAW_URL" | grep -oP '(?<=id=)[a-zA-Z0-9_-]+')
           elif echo "$RAW_URL" | grep -q "/d/"; then
-            TARGET_ID=$(echo "$RAW_URL" | sed -n 's/.*\/d\/\([^/?&#]*\).*/\1/p')
+            TARGET_ID=$(echo "$RAW_URL" | grep -oP '(?<=/d/)[a-zA-Z0-9_-]+')
           elif echo "$RAW_URL" | grep -q "/folders/"; then
-            TARGET_ID=$(echo "$RAW_URL" | sed -n 's/.*\/folders\/\([^/?&#]*\).*/\1/p')
+            TARGET_ID=$(echo "$RAW_URL" | grep -oP '(?<=/folders/)[a-zA-Z0-9_-]+')
           else
             TARGET_ID="${RAW_URL##*/}"
           fi
           TARGET_ID=$(echo "$TARGET_ID" | tr -d ' \n\r')
 
-          # 2. Xác định loại nguồn (Bắt buộc phải có)
+          # 2. Xác định loại nguồn
           case "$RAW_URL" in
             *folder*) TARGET_KIND="FOLDER" ;;
             *)        TARGET_KIND="FILE" ;;
@@ -67,7 +67,7 @@ jobs:
           # 3. Lấy Folder ID đích
           rclone mkdir "gdrive:${DEST}"
           DEST_DIR_ID=$(rclone backend fileid gdrive: "${DEST}" 2>/dev/null | tr -d ' \n\r')
-          echo "📂 Folder ID đích (${DEST}): ${DEST_DIR_ID:-'Root'}"
+          echo "📂 Folder ID đích (${DEST}):${DEST_DIR_ID:-'Root'}"
 
           COPIED_SUCCESS=0
 
@@ -88,16 +88,16 @@ jobs:
               OPT_ARG=(-o "dst-dir-id=${DEST_DIR_ID}")
             fi
 
-            # Kiểm tra copyid thật sự thành công (rclone in ra JSON hoặc ID nếu thành công)
-            COPY_OUT=$(rclone backend copyid gdrive: "$TARGET_ID" "${OPT_ARG[@]}" 2>&1 || true)
-            echo "$COPY_OUT"
-            if echo "$COPY_OUT" | grep -qi "id"; then
+            # Copy trực tiếp với ID
+            rclone backend copyid gdrive: "$TARGET_ID" "${OPT_ARG[@]}" > copy.log 2>&1 || true
+            cat copy.log
+            if ! grep -qi "failed" copy.log && ! grep -qi "error" copy.log; then
               COPIED_SUCCESS=1
               METHOD_USED="Server-Side Direct (File)"
             fi
           fi
 
-          # 5. Fallback tải về máy ảo (Dùng gdown với fuzzy mode để qua mặt trang cảnh báo)
+          # 5. Fallback tải về máy ảo nếu Server-Side không được
           if [ "$COPIED_SUCCESS" -eq 1 ]; then
             echo "🎉 Server-Side Copy thành công!"
           else
@@ -115,12 +115,11 @@ jobs:
             if [ "$TARGET_KIND" = "FOLDER" ]; then
               gdown --folder "https://drive.google.com/drive/folders/${TARGET_ID}" $COOKIE_FILE || true
             else
-              # Cờ --fuzzy giúp gdown tự vượt trang cảnh báo file quá lớn / virus
               gdown "https://drive.google.com/uc?id=${TARGET_ID}" --fuzzy $COOKIE_FILE || true
             fi
             cd ..
 
-            # Xóa các file rác HTML do tải hỏng nếu có
+            # Dọn dẹp file html tải hỏng
             find ./temp_transfer -maxdepth 1 -type f -name "download" -size -100k -delete 2>/dev/null || true
 
             if [ -z "$(ls -A ./temp_transfer 2>/dev/null)" ]; then
@@ -133,7 +132,7 @@ jobs:
             rm -rf ./temp_transfer
           fi
 
-          # 6. Trích xuất thông tin (Loại bỏ cookies.txt khỏi danh sách hiển thị)
+          # 6. Trích xuất thông tin
           set +e
           DEST_LINK=$(rclone link "gdrive:${DEST}" 2>/dev/null)
           rclone lsjson "gdrive:${DEST}" | jq '[.[] | select(.Name != "cookies.txt" and .Name != "download")]' > dest_files.json 2>/dev/null
@@ -142,7 +141,7 @@ jobs:
           LATEST_BYTES=$(jq -r 'sort_by(.ModTime) | reverse | .[0].Size // empty' dest_files.json)
           
           if [ -n "$LATEST_BYTES" ] && [ "$LATEST_BYTES" -ge 0 ] 2>/dev/null; then
-            SRC_SIZE=$(numfmt --to=iec-i --suffix=B --format="%.2f" "$LATEST_BYTES" 2>/dev/null)
+            SRC_SIZE=$(numfmt --to=iec-i --suffix=B --format="\%.2f" "$LATEST_BYTES" 2>/dev/null)
           else
             SRC_SIZE="N/A"
           fi
@@ -152,10 +151,10 @@ jobs:
 
           ITEMS_COUNT=$(jq 'length' dest_files.json 2>/dev/null || echo 0)
           if [ "$ITEMS_COUNT" -gt 0 ]; then
-            for i in $(seq 0 $((ITEMS_COUNT - 1))); do
+            for i in $(seq 0$((ITEMS_COUNT - 1))); do
               FNAME=$(jq -r ".[$i].Name" dest_files.json)
               FSIZE_B=$(jq -r ".[$i].Size" dest_files.json)
-              FSIZE=$(numfmt --to=iec-i --suffix=B --format="%.2f" "$FSIZE_B" 2>/dev/null)
+              FSIZE=$(numfmt --to=iec-i --suffix=B --format="\%.2f" "$FSIZE_B" 2>/dev/null)
               FID=$(rclone backend fileid gdrive: "${DEST}/${FNAME}" 2>/dev/null | tr -d ' \n\r')
               
               if [ -n "$FID" ]; then
@@ -171,7 +170,6 @@ jobs:
           echo "DEST_LINK=${DEST_LINK}" >> $GITHUB_ENV
           echo "METHOD_USED=${METHOD_USED}" >> $GITHUB_ENV
           set -e
-
 
       - name: Workflow Summary
         if: always()
