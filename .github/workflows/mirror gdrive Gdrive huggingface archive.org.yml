@@ -1,4 +1,4 @@
-name: mirror-cloud (Multi-Host Gdrive to Gdrive, HuggingFace & archive.org)
+name: mirror-cloud choice (Multi-Host Gdrive to Gdrive, HuggingFace & archive.org)
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ on:
         default: true
 
       upload_to_ia:
-        description: "Tải lên Archive.org (Tốc độ upload khá chậm)"
+        description: "Tải lên Archive.org"
         type: boolean
         default: false
 
@@ -35,7 +35,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y python3-pip aria2 wget curl zip unzip
+          sudo apt install -y python3-pip aria2 wget curl
           curl https://rclone.org/install.sh | sudo bash
           pip3 install --no-cache-dir gdown internetarchive huggingface_hub
 
@@ -44,15 +44,20 @@ jobs:
           GDRIVE_COOKIES: ${{ secrets.GDRIVE_COOKIES }}
           RCLONE_CONFIG_DATA: ${{ secrets.RCLONE_CONFIG }}
         run: |
+          set -e
           echo "🔽 Bắt đầu xử lý tải nguồn..."
           RAW_URL="${{ github.event.inputs.file_url }}"
           echo "Link nguồn: $RAW_URL"
           USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
-          # 0. Thiết lập Rclone config và Cookies nếu có
+          mkdir -p target_payload
+
+          # Cấu hình Rclone & Cookies nếu có
+          HAS_RCLONE=0
           if [ -n "${RCLONE_CONFIG_DATA:-}" ]; then
             mkdir -p ~/.config/rclone
             echo "$RCLONE_CONFIG_DATA" > ~/.config/rclone/rclone.conf
+            HAS_RCLONE=1
           fi
 
           COOKIE_OPT=""
@@ -62,38 +67,45 @@ jobs:
             COOKIE_OPT="--cookies cookies.txt"
           fi
 
-          # 1. Google Drive (File đơn lẻ hoặc Folder)
+          # 1. Google Drive
           if echo "$RAW_URL" | grep -qE "drive\.google\.com|drive\.usercontent\.google\.com"; then
             echo "📦 Nhận diện nguồn: Google Drive"
+            CLEAN_URL=$(echo "$RAW_URL" | sed 's/\/mobile//g')
 
-            if echo "$RAW_URL" | grep -qE "folders\/|id=[a-zA-Z0-9_-]+&.*folder"; then
-              FOLDER_ID=$(echo "$RAW_URL" \vert{} grep -oP 'folders\/\K[a-zA-Z0-9_-]+' \vert{}\vert{} echo "$RAW_URL" | grep -oP 'id=\K[a-zA-Z0-9_-]+')
+            # Link là Folder
+            if echo "$CLEAN_URL" | grep -qE "folders\/|folder"; then
+              FOLDER_ID=$(echo "$CLEAN_URL" \vert{} grep -oP 'folders\/\K[a-zA-Z0-9_-]+' \vert{}\vert{} echo "$CLEAN_URL" | grep -oP 'id=\K[a-zA-Z0-9_-]+' | head -n 1)
               echo "📂 Phát hiện Thư mục (Folder ID: $FOLDER_ID)"
+              DOWNLOAD_SUCCESS=0
 
-              mkdir -p downloaded_folder
-              rclone copy "gdrive,root_folder_id=${FOLDER_ID}:" ./downloaded_folder \
-                --drive-shared-with-me=false \
-                --drive-server-side-across-configs \
-                --progress --transfers 8 || \
-              gdown --folder "https://drive.google.com/drive/folders/${FOLDER_ID}" -O ./downloaded_folder $COOKIE_OPT
+              if [ "$HAS_RCLONE" -eq 1 ]; then
+                echo "🚀 Tải folder qua Rclone giữ nguyên cấu trúc..."
+                if rclone copy "gdrive,root_folder_id=${FOLDER_ID}:" ./target_payload \
+                    --drive-shared-with-me=false \
+                    --progress --transfers 8; then
+                  DOWNLOAD_SUCCESS=1
+                fi
+              fi
 
-              FILE_NAME="Drive_Folder_${FOLDER_ID}.zip"
-              echo "📦 Đang nén thư mục thành ${FILE_NAME}..."
-              zip -r -q "$FILE_NAME" ./downloaded_folder
-              rm -rf ./downloaded_folder
+              if [ "$DOWNLOAD_SUCCESS" -eq 0 ]; then
+                echo "⚡ Chuyển sang tải folder bằng gdown..."
+                gdown --folder "https://drive.google.com/drive/folders/${FOLDER_ID}" -O ./target_payload $COOKIE_OPT || true
+              fi
+
+            # Link là File đơn lẻ
             else
-              FILE_ID=$(echo "$RAW_URL" | grep -oP '(id=|\/d\/)\K[a-zA-Z0-9_-]+' | head -n 1)
+              FILE_ID=$(echo "$CLEAN_URL" | grep -oP '(id=|\/d\/)\K[a-zA-Z0-9_-]+' | head -n 1)
               echo "📄 Trích xuất File ID: $FILE_ID"
-
               COPIED_BY_RCLONE=0
-              if [ -f ~/.config/rclone/rclone.conf ]; then
-                echo "🚀 Thử clone trực tiếp file qua Rclone server-side..."
-                if rclone backend copyid gdrive: "$FILE_ID" "./" 2>/dev/null; then
+
+              if [ "$HAS_RCLONE" -eq 1 ]; then
+                if rclone backend copyid gdrive: "$FILE_ID" "./target_payload/" 2>/dev/null; then
                   COPIED_BY_RCLONE=1
                 fi
               fi
 
               if [ "$COPIED_BY_RCLONE" -eq 0 ]; then
+                cd target_payload
                 gdown "https://drive.google.com/uc?id=${FILE_ID}" $COOKIE_OPT || \
                 aria2c --header="User-Agent: $USER_AGENT" \
                        --check-certificate=false \
@@ -101,7 +113,8 @@ jobs:
                        --auto-file-renaming=false \
                        --content-disposition \
                        -s16 -x16 -j16 \
-                       "$RAW_URL"
+                       "https://drive.google.com/uc?export=download&id=${FILE_ID}"
+                cd ..
               fi
             fi
 
@@ -109,48 +122,39 @@ jobs:
           elif echo "$RAW_URL" | grep -q "pixeldrain.com"; then
             echo "📦 Nhận diện nguồn: Pixeldrain"
             PIXEL_ID=$(echo "$RAW_URL" | grep -oP '(u\/|file\/)\K[a-zA-Z0-9]+')
-            if [ -z "$PIXEL_ID" ]; then
-              echo "❌ Không trích xuất được Pixeldrain ID!"
-              exit 1
-            fi
-
             DIRECT_PIXEL="https://pixeldrain.com/api/file/${PIXEL_ID}"
+            cd target_payload
             aria2c --header="User-Agent: $USER_AGENT" \
                    --check-certificate=false \
                    --allow-overwrite=true \
                    --auto-file-renaming=false \
                    --content-disposition \
-                   --summary-interval=1 \
                    -s16 -x16 -j16 \
                    "$DIRECT_PIXEL"
+            cd ..
 
           # 3. Direct Link
           else
             echo "🌐 Nhận diện nguồn: Direct Link"
+            cd target_payload
             wget -c --progress=bar:force:noscroll --content-disposition "$RAW_URL"
+            cd ..
           fi
 
-          echo "📂 Danh sách file sau khi tải:"
-          ls -lh
-
-          FILE_NAME=$(ls -S | grep -vE '\.txt$\vert{}\.ya?ml$' | head -n 1)
-
-          if [ -z "$FILE_NAME" ]; then
-            echo "❌ Không tìm thấy file hợp lệ sau khi tải!"
+          # Kiểm tra dữ liệu tải về
+          if [ -z "$(ls -A ./target_payload 2>/dev/null)" ]; then
+            echo "❌ Không tìm thấy dữ liệu nào được tải về trong ./target_payload!"
             exit 1
           fi
 
-          FILE_SIZE=$(stat -c\%s "$FILE_NAME")
-          echo "📏 Dung lượng: $FILE_SIZE bytes"
+          echo "📂 Cấu trúc dữ liệu sau khi tải:"
+          ls -lh ./target_payload
 
-          if [ "$FILE_SIZE" -lt 104857600 ]; then
-            echo "❌ File quá nhỏ (< 100MB), có thể link đã bị giới hạn quota hoặc tải file HTML báo lỗi."
-            exit 1
-          fi
+          TOTAL_SIZE=$(du -sb ./target_payload | cut -f1)
+          TOTAL_SIZE_HUMAN=$(du -sh ./target_payload | cut -f1)
+          echo "📏 Tổng dung lượng: $TOTAL_SIZE_HUMAN ($TOTAL_SIZE bytes)"
 
-          echo "🎉 Đã sẵn sàng file: $FILE_NAME"
-          echo "FILE_NAME=$FILE_NAME" >> $GITHUB_ENV
-          echo "FILE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
+          echo "PAYLOAD_SIZE=$TOTAL_SIZE_HUMAN" >> $GITHUB_ENV
 
       - name: Upload to Google Drive (Mirror-Cloud)
         if: inputs.upload_to_gdrive == true
@@ -158,23 +162,21 @@ jobs:
         env:
           RCLONE_CONFIG_DATA: ${{ secrets.RCLONE_CONFIG }}
         run: |
-          echo "🚀 Đang chuẩn bị tải lên Google Drive..."
-
           if [ -z "${RCLONE_CONFIG_DATA}" ]; then
-            echo "⚠️ CẢNH BÁO: Không tìm thấy RCLONE_CONFIG trong Secrets, bỏ qua bước này!"
+            echo "⚠️ Bỏ qua: Không tìm thấy RCLONE_CONFIG!"
           else
             mkdir -p ~/.config/rclone
             echo "$RCLONE_CONFIG_DATA" > ~/.config/rclone/rclone.conf
 
-            echo "Bắt đầu upload $FILE_NAME lên Google Drive thư mục Mirror-Cloud..."
-            rclone copy "$FILE_NAME" "gdrive:Mirror-Cloud" \
+            echo "🚀 Đồng bộ nguyên trạng thư mục lên Google Drive (Mirror-Cloud)..."
+            rclone copy ./target_payload "gdrive:Mirror-Cloud" \
               --progress \
               --drive-chunk-size 64M \
-              --transfers 4
+              --transfers 8
 
-            GDRIVE_LINK=$(rclone link "gdrive:Mirror-Cloud/$FILE_NAME" 2>/dev/null || echo "")
+            GDRIVE_LINK=$(rclone link "gdrive:Mirror-Cloud" 2>/dev/null || echo "")
             echo "GDRIVE_LINK=${GDRIVE_LINK}" >> $GITHUB_ENV
-            echo "✅ Upload Google Drive hoàn tất! Link: ${GDRIVE_LINK}"
+            echo "✅ Hoàn tất upload Drive!"
           fi
 
       - name: Upload to Hugging Face
@@ -183,23 +185,18 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          echo "🚀 Đang chuẩn bị tải lên Hugging Face..."
-
           if [ -z "${HF_TOKEN}" ]; then
-            echo "⚠️ CẢNH BÁO: Không tìm thấy HF_TOKEN trong Secrets, bỏ qua bước này!"
-          elif [ -z "${FILE_NAME}" ] \vert{}\vert{} [ ! -f "${FILE_NAME}" ]; then
-            echo "❌ CẢNH BÁO: File '${FILE_NAME}' không tồn tại trong thư mục làm việc!"
+            echo "⚠️ Bỏ qua: Không tìm thấy HF_TOKEN!"
           else
-            echo "Bắt đầu upload $FILE_NAME lên repo Strong568/Mirror-Cloud..."
-            
+            echo "🚀 Upload toàn bộ thư mục lên repo Strong568/Mirror-Cloud..."
             huggingface-cli upload Strong568/Mirror-Cloud \
-              "$FILE_NAME" \
-              "$FILE_NAME" \
+              ./target_payload \
+              . \
               --repo-type model
 
-            HF_LINK="https://huggingface.co/Strong568/Mirror-Cloud/resolve/main/${FILE_NAME}"
-            echo "HF_LINK=${HF_LINK}" >> $GITHUB_ENV
-            echo "✅ Upload Hugging Face hoàn tất: ${HF_LINK}"
+            HF_REPO="https://huggingface.co/Strong568/Mirror-Cloud/tree/main"
+            echo "HF_REPO=${HF_REPO}" >> $GITHUB_ENV
+            echo "✅ Hoàn tất upload Hugging Face: ${HF_REPO}"
           fi
 
       - name: Upload to Archive.org
@@ -209,10 +206,8 @@ jobs:
           IA_ACCESS_KEY: ${{ secrets.IA_ACCESS_KEY }}
           IA_SECRET_KEY: ${{ secrets.IA_SECRET_KEY }}
         run: |
-          echo "🚀 Đang chuẩn bị tải lên Archive.org..."
-
           if [ -z "${IA_ACCESS_KEY}" ] \vert{}\vert{} [ -z "${IA_SECRET_KEY}" ]; then
-            echo "⚠️ CẢNH BÁO: Không tìm thấy IA_ACCESS_KEY hoặc IA_SECRET_KEY trong Secrets, bỏ qua bước này!"
+            echo "⚠️ Bỏ qua: Không tìm thấy IA_ACCESS_KEY hoặc IA_SECRET_KEY!"
           else
             INPUT_ID="${{ github.event.inputs.ia_item_id }}"
             if [ -z "$INPUT_ID" ] \vert{}\vert{} [ "$INPUT_ID" == "mirror-cloud" ]; then
@@ -224,67 +219,48 @@ jobs:
             mkdir -p ~/.config
             printf "[s3]\naccess = %s\nsecret = %s\n" "${IA_ACCESS_KEY}" "${IA_SECRET_KEY}" > ~/.config/ia.ini
 
-            DOWNLOAD_URL="https://archive.org/download/${ITEM_ID}/${FILE_NAME}"
-            echo "Bắt đầu upload $FILE_NAME lên item: $ITEM_ID..."
+            echo "🚀 Tải toàn bộ file lên item: $ITEM_ID..."
+            cd target_payload
+            ia upload "$ITEM_ID" . \
+              --metadata="mediatype:software" \
+              --metadata="collection:opensource_software" \
+              --header="x-archive-queue-derive:0" \
+              --retries=3
+            cd ..
 
-            if ia upload "$ITEM_ID" "$FILE_NAME" \
-                --metadata="mediatype:software" \
-                --metadata="collection:opensource_software" \
-                --header="x-archive-queue-derive:0" \
-                --retries=3; then
-              echo "IA_LINK=${DOWNLOAD_URL}" >> $GITHUB_ENV
-              echo "✅ Upload Archive.org hoàn tất: ${DOWNLOAD_URL}"
-            else
-              echo "❌ Upload lên Archive.org thất bại!"
-            fi
+            IA_LINK="https://archive.org/details/${ITEM_ID}"
+            echo "IA_LINK=${IA_LINK}" >> $GITHUB_ENV
+            echo "✅ Hoàn tất upload Archive.org: ${IA_LINK}"
           fi
 
-      - name: Workflow Summary & Notification
+      - name: Workflow Summary
         if: always()
         run: |
-          ITEM_ID="${{ github.event.inputs.ia_item_id }}"
-
           echo "=========================================="
           echo "             WORKFLOW REPORT              "
           echo "=========================================="
 
           if [ "${{ job.status }}" == "success" ]; then
-            echo "TRẠNG THÁI   : THÀNH CÔNG (SUCCESS)"
-            echo "LINK GỐC     : ${{ github.event.inputs.file_url }}"
-            echo "GDRIVE LINK  : ${GDRIVE_LINK:-N/A}"
-            echo "ARCHIVE LINK : ${IA_LINK:-N/A}"
-            echo "HF LINK      : ${HF_LINK:-N/A}"
-            echo "TÊN FILE     : ${FILE_NAME}"
-            echo "DUNG LƯỢNG   : ${FILE_SIZE} bytes"
-            echo "=========================================="
-
             {
               echo "### ✅ Mirror Completed Successfully"
               echo ""
-              echo "- **Link gốc (Input):** [${{ github.event.inputs.file_url }}](${{ github.event.inputs.file_url }})"
+              echo "- **Link gốc:** [${{ github.event.inputs.file_url }}](${{ github.event.inputs.file_url }})"
+              echo "- **Dung lượng:** \`${PAYLOAD_SIZE}\`"
               if [ -n "${GDRIVE_LINK:-}" ]; then
-                echo "- **Google Drive:** [Xem file trên Drive](${GDRIVE_LINK})"
+                echo "- **Google Drive:** [Truy cập thư mục](${GDRIVE_LINK})"
               fi
-              if [ -n "${HF_LINK:-}" ]; then
-                echo "- **Hugging Face Direct Download:** [Tải từ Hugging Face](${HF_LINK})"
-                echo "- **Hugging Face Repo:** [Strong568/Mirror-Cloud](https://huggingface.co/Strong568/Mirror-Cloud)"
+              if [ -n "${HF_REPO:-}" ]; then
+                echo "- **Hugging Face Files:** [Duyệt file trên Repo](${HF_REPO})"
               fi
               if [ -n "${IA_LINK:-}" ]; then
-                echo "- **Archive.org Download:** [Tải từ Archive.org](${IA_LINK})"
-                echo "- **Archive.org Item ID:** \`$ITEM_ID\`"
+                echo "- **Archive.org Details:** [Xem trên Archive](${IA_LINK})"
               fi
-              echo "- **File Name:** \`${FILE_NAME}\`"
-              echo "- **File Size:** \`${FILE_SIZE} bytes\`"
             } >> $GITHUB_STEP_SUMMARY
           else
-            echo "TRẠNG THÁI   : THẤT BẠI (FAILED)"
-            echo "LINK GỐC     : ${{ github.event.inputs.file_url }}"
-            echo "=========================================="
-
             {
               echo "### ❌ Mirror Failed"
               echo ""
-              echo "- **Link gốc (Input):** [${{ github.event.inputs.file_url }}](${{ github.event.inputs.file_url }})"
-              echo "- *Tải file hoặc upload thất bại. Vui lòng kiểm tra lại log chi tiết ở các bước trên.*"
+              echo "- **Link gốc:** [${{ github.event.inputs.file_url }}](${{ github.event.inputs.file_url }})"
+              echo "- Quá trình tải hoặc đồng bộ file gặp lỗi. Vui lòng kiểm tra lại log chi tiết."
             } >> $GITHUB_STEP_SUMMARY
           fi
