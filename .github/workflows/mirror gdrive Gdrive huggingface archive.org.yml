@@ -71,26 +71,13 @@ jobs:
           if echo "$RAW_URL" | grep -qE "drive\.google\.com|drive\.usercontent\.google\.com"; then
             echo "📦 Nhận diện nguồn: Google Drive"
             
-            # Trích xuất Folder ID hoặc File ID bằng Python (chuẩn xác tuyệt đối, không lo URL bị bọc tham số)
-            EXTRACTED_TYPE=$(python3 -c "
-            import re, sys
-            url = '''$RAW_URL'''
-            if 'folders' in url or 'folder' in url:
-                m = re.search(r'folders/([a-zA-Z0-9_-]+)', url) or re.search(r'id=([a-zA-Z0-9_-]+)', url)
-                if m:
-                    print(f'FOLDER:{m.group(1)}')
-                    sys.exit(0)
-            m = re.search(r'/d/([a-zA-Z0-9_-]+)', url) or re.search(r'id=([a-zA-Z0-9_-]+)', url)
-            if m:
-                print(f'FILE:{m.group(1)}')
-                sys.exit(0)
-            print('UNKNOWN:')
-            ")
+            # Trích xuất Folder ID hoặc File ID chuẩn xác bằng Python inline
+            EXTRACTED_TYPE=$(python3 -c "import re, sys; url = '''$RAW_URL'''; is_folder = 'folders' in url or 'folder' in url; m = (re.search(r'folders/([a-zA-Z0-9_-]+)', url) or re.search(r'id=([a-zA-Z0-9_-]+)', url)) if is_folder else (re.search(r'/d/([a-zA-Z0-9_-]+)', url) or re.search(r'id=([a-zA-Z0-9_-]+)', url)); print(f'FOLDER:{m.group(1)}' if is_folder and m else (f'FILE:{m.group(1)}' if m else 'UNKNOWN:'))")
 
             TARGET_KIND=$(echo "$EXTRACTED_TYPE" | cut -d':' -f1)
             TARGET_ID=$(echo "$EXTRACTED_TYPE" | cut -d':' -f2)
 
-            echo "🔍 Loại nguồn nhận diện: $TARGET_KIND"
+            echo "🔍 Loại nguồn: $TARGET_KIND"
             echo "📂 ID chính xác: $TARGET_ID"
 
             if [ -z "$TARGET_ID" ]; then
@@ -102,7 +89,6 @@ jobs:
             if [ "$TARGET_KIND" == "FOLDER" ]; then
               DOWNLOAD_SUCCESS=0
 
-              # Cách 1: Tải bằng gdown (đã bỏ cờ lỗi --remaining-ok)
               echo "⚡ Đang tải thư mục bằng gdown..."
               if gdown --folder "https://drive.google.com/drive/folders/${TARGET_ID}" -O ./target_payload $COOKIE_OPT; then
                 if [ -n "$(ls -A ./target_payload 2>/dev/null)" ]; then
@@ -110,9 +96,8 @@ jobs:
                 fi
               fi
 
-              # Cách 2: Nếu gdown bị nghẽn quota, fallback sang Rclone dùng remote đã cấu hình
               if [ "$DOWNLOAD_SUCCESS" -eq 0 ] && [ "$HAS_RCLONE" -eq 1 ]; then
-                echo "🚀 Fallback sang Rclone trỏ thẳng Folder ID..."
+                echo "🚀 Fallback sang Rclone trỏ đúng Folder ID..."
                 rclone copy "gdrive:" ./target_payload \
                   --drive-root-folder-id="$TARGET_ID" \
                   --progress --transfers 4 --drive-acknowledge-abuse || true
@@ -131,7 +116,6 @@ jobs:
                      "https://drive.google.com/uc?export=download&id=${TARGET_ID}"
               cd ..
             fi
-
 
           # 2. Pixeldrain
           elif echo "$RAW_URL" | grep -q "pixeldrain.com"; then
