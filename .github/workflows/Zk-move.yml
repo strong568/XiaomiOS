@@ -1,4 +1,4 @@
-name: Move ZKOS and ZKUI Files to Zk-rom
+name: Huggingface Move ZKOS and ZKUI Files to Zk-rom
 
 on:
   workflow_dispatch: # Cho phép bấm chạy thủ công trên GitHub
