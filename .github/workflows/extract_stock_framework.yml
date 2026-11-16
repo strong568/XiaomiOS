@@ -81,7 +81,7 @@ jobs:
             rm -rf build/baserom/
             mkdir -p build/baserom/images/ "$work_dir/bin/ddevice"
 
-            # 2. Giải nén theo định dạng ROM (payload / br / super.img đơn / super.img chia nhỏ)
+            # 2. Giải nén theo định dạng ROM (payload / br / super.img.zst / super.img đơn / super.img chia nhỏ)
             if unzip -l "$baserom" | grep -q "payload.bin"; then
                 echo "[INFO] Extracting payload.bin..."
                 unzip -q "$baserom" payload.bin -d build/baserom
@@ -98,6 +98,34 @@ jobs:
                     brotli -d "build/baserom/$part.new.dat.br"
                     python3 "$work_dir/bin/Linux/x86_64/sdat2img.py" "build/baserom/$part.transfer.list" "build/baserom/$part.new.dat" "build/baserom/images/$part.img"
                 done
+            elif unzip -l "$baserom" | grep -qE "(^|/)super\.img\.zst$"; then
+                echo "[INFO] Extracting super.img.zst..."
+                unzip -j -q "$baserom" "*/super.img.zst" "super.img.zst" -d build/baserom/ 2>/dev/null || true
+                rm -f "$baserom"
+
+                if [ ! -s build/baserom/super.img.zst ]; then
+                    echo "[ERROR] Không rút được file super.img.zst từ trong zip!"
+                    exit 1
+                fi
+
+                echo "[INFO] Decompressing super.img.zst with zstd..."
+                zstd -d --rm build/baserom/super.img.zst -o build/baserom/super.img
+
+                if file build/baserom/super.img | grep -q "Android sparse image"; then
+                    echo "[INFO] Converting sparse super.img to raw..."
+                    /usr/bin/simg2img build/baserom/super.img build/baserom/super_raw.img
+                    rm -f build/baserom/super.img
+                    mv -f build/baserom/super_raw.img build/baserom/super.img
+                fi
+
+                echo "[INFO] Unpacking super.img with lpunpack..."
+                python3 bin/lpunpack.py build/baserom/super.img build/baserom/images/
+                rm -f build/baserom/super.img
+
+                for i in build/baserom/images/*_a.img; do
+                    [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
+                done
+                super_list="system system_ext product vendor odm mi_ext"
             elif unzip -l "$baserom" | grep -qE "(^|/)super\.img$"; then
                 echo "[INFO] Extracting single super.img..."
                 unzip -j -q "$baserom" "*/super.img" "super.img" -d build/baserom/ 2>/dev/null || true
