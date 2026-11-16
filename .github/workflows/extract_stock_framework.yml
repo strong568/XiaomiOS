@@ -47,7 +47,7 @@ jobs:
           sudo dpkg --configure -a || true
           sudo bash setup.sh
           sudo apt-get update -y
-          sudo apt-get install -y xmlstarlet aapt zipalign p7zip-full libc++1 libc++abi1 unzip aria2 zstd brotli
+          sudo apt-get install -y xmlstarlet aapt zipalign p7zip-full libc++1 libc++abi1 unzip aria2 zstd brotli file android-sdk-libsparse-utils
           sudo chmod -R 777 bin/ *.sh
 
       - name: Download & Unpack Stock Partitions
@@ -73,26 +73,51 @@ jobs:
             rm -rf build/baserom/
             mkdir -p build/baserom/images/ "$work_dir/bin/ddevice"
 
-            # 2. Giải nén theo định dạng ROM (payload / br / super.img)
+            # 2. Giải nén theo định dạng ROM (payload / br / super.img đơn / super.img chia nhỏ)
             if unzip -l "$baserom" | grep -q "payload.bin"; then
                 echo "[INFO] Extracting payload.bin..."
                 unzip -q "$baserom" payload.bin -d build/baserom
+                rm -f "$baserom"
                 payload-extract extract -o build/baserom/images/ build/baserom/payload.bin
+                rm -f build/baserom/payload.bin
                 super_list="system system_ext product vendor odm mi_ext"
             elif unzip -l "$baserom" | grep -q "br$"; then
                 echo "[INFO] Extracting new.dat.br..."
                 unzip -q "$baserom" -d build/baserom
+                rm -f "$baserom"
                 super_list=$(grep "add " build/baserom/dynamic_partitions_op_list | awk "{ print \$2 }")
                 for part in ${super_list}; do
                     brotli -d "build/baserom/$part.new.dat.br"
                     python3 "$work_dir/bin/Linux/x86_64/sdat2img.py" "build/baserom/$part.transfer.list" "build/baserom/$part.new.dat" "build/baserom/images/$part.img"
                 done
-            elif unzip -l "$baserom" | grep -q "super.img.*"; then
-                echo "[INFO] Extracting super.img..."
-                unzip -q "$baserom" "*super.img*" -d build/baserom/
-                super_dir=$(dirname $(find build/baserom -name "*super.img.0*" | head -n 1))
-                /usr/bin/simg2img ${super_dir}/*super.img.* build/baserom/super.img
+            elif unzip -l "$baserom" | grep -qE "(^|/)super\.img$"; then
+                echo "[INFO] Extracting single super.img..."
+                unzip -j -q "$baserom" "*/super.img" "super.img" -d build/baserom/ 2>/dev/null || true
+                rm -f "$baserom"
+
+                if file build/baserom/super.img | grep -q "Android sparse image"; then
+                    echo "[INFO] Converting sparse super.img to raw..."
+                    simg2img build/baserom/super.img build/baserom/super_raw.img
+                    mv -f build/baserom/super_raw.img build/baserom/super.img
+                fi
+
+                echo "[INFO] Unpacking super.img with lpunpack..."
                 python3 bin/lpunpack.py build/baserom/super.img build/baserom/images/
+                rm -f build/baserom/super.img
+
+                for i in build/baserom/images/*_a.img; do
+                    [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
+                done
+                super_list="system system_ext product vendor odm mi_ext"
+            elif unzip -l "$baserom" | grep -q "super.img.*"; then
+                echo "[INFO] Extracting split super.img.*..."
+                unzip -q "$baserom" "*super.img*" -d build/baserom/
+                rm -f "$baserom"
+                super_dir=$(dirname $(find build/baserom -name "*super.img.0*" | head -n 1))
+                simg2img ${super_dir}/*super.img.* build/baserom/super.img
+                rm -rf ${super_dir}/*super.img.*
+                python3 bin/lpunpack.py build/baserom/super.img build/baserom/images/
+                rm -f build/baserom/super.img
                 for i in build/baserom/images/*_a.img; do
                     [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
                 done
@@ -127,7 +152,7 @@ jobs:
       - name: Prepare Release Info
         id: release_info
         run: |
-          TAG_NAME="Stock_Framework_$(date +'%Y%m%d_%H%M%S')"
+          TAG_NAME="Framework_$(date +'%Y%m%d_%H%M%S')"
           BUILD_TIME="$(date +'%Y-%m-%d %H:%M:%S')"
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
           echo "build_time=$BUILD_TIME" >> "$GITHUB_OUTPUT"
@@ -137,7 +162,7 @@ jobs:
         if: env.DUMP_STOCK_PATH != ''
         with:
           tag_name: ${{ steps.release_info.outputs.tag_name }}
-          name: "Stock Framework: ${{ steps.release_info.outputs.tag_name }}"
+          name: "Framework: ${{ steps.release_info.outputs.tag_name }}"
           body: |
             ### Trích xuất Stock Framework tự động
             - **URL nguồn:** `${{ inputs.input_url }}`
