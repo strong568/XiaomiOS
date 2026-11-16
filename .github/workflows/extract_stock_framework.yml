@@ -128,7 +128,9 @@ jobs:
         id: release_info
         run: |
           TAG_NAME="Stock_Framework_$(date +'%Y%m%d_%H%M%S')"
+          BUILD_TIME="$(date +'%Y-%m-%d %H:%M:%S')"
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "build_time=$BUILD_TIME" >> "$GITHUB_OUTPUT"
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
@@ -138,10 +140,9 @@ jobs:
           name: "Stock Framework: ${{ steps.release_info.outputs.tag_name }}"
           body: |
             ### Trích xuất Stock Framework tự động
-            - **File ROM:** `$(basename "${{ env.STOCK_BASEROM }}")`
             - **URL nguồn:** `${{ inputs.input_url }}`
             - **Người thực hiện:** `${{ inputs.builder_name }}`
-            - **Thời gian:** $(date +'%Y-%m-%d %H:%M:%S')
+            - **Thời gian:** `${{ steps.release_info.outputs.build_time }}`
           files: |
             ${{ env.DUMP_STOCK_PATH }}
         env:
