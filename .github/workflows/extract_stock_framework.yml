@@ -95,9 +95,15 @@ jobs:
                 unzip -j -q "$baserom" "*/super.img" "super.img" -d build/baserom/ 2>/dev/null || true
                 rm -f "$baserom"
 
+                if [ ! -s build/baserom/super.img ]; then
+                    echo "[ERROR] Không rút được file super.img từ trong zip!"
+                    exit 1
+                fi
+
                 if file build/baserom/super.img | grep -q "Android sparse image"; then
                     echo "[INFO] Converting sparse super.img to raw..."
                     simg2img build/baserom/super.img build/baserom/super_raw.img
+                    rm -f build/baserom/super.img
                     mv -f build/baserom/super_raw.img build/baserom/super.img
                 fi
 
