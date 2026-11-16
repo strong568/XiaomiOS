@@ -164,7 +164,7 @@ jobs:
           tag_name: ${{ steps.release_info.outputs.tag_name }}
           name: "Framework: ${{ steps.release_info.outputs.tag_name }}"
           body: |
-            ### Trích xuất Stock Framework tự động
+            ### Trích xuất Framework tự động
             - **URL nguồn:** `${{ inputs.input_url }}`
             - **Người thực hiện:** `${{ inputs.builder_name }}`
             - **Thời gian:** `${{ steps.release_info.outputs.build_time }}`
