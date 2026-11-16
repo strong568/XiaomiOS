@@ -104,6 +104,8 @@ jobs:
             - **Người thực hiện:** `${{ inputs.builder_name }}`
             - **Thời gian:** $(date +'%Y-%m-%d %H:%M:%S')
           files: |
-            ${{ env.DUMP_STOCK_PATH }}${{ env.DUMP_MOD_PATH }}
+            ${{ env.DUMP_STOCK_PATH }}
+            ${{ env.DUMP_MOD_PATH }}
+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
