@@ -82,25 +82,30 @@ jobs:
             mkdir -p build/baserom/images/ "$work_dir/bin/ddevice"
 
             # 2. Giải nén theo định dạng ROM (payload / br / super.img.zst / super.img đơn / super.img chia nhỏ)
-            if unzip -l "$baserom" | grep -q "payload.bin"; then
+            # zip_list=$(7z l -ba "$baserom" | awk '{print $NF}')
+            zip_list=$(7z l -ba "$baserom" | awk "{print \$NF}")
+            
+            if echo "$zip_list" | grep -q "payload.bin"; then
                 echo "[INFO] Extracting payload.bin..."
-                unzip -q "$baserom" payload.bin -d build/baserom
+                7z e -y "$baserom" "payload.bin" -obuild/baserom >/dev/null
                 rm -f "$baserom"
                 payload-extract extract -o build/baserom/images/ build/baserom/payload.bin
                 rm -f build/baserom/payload.bin
                 super_list="system system_ext product vendor odm mi_ext"
-            elif unzip -l "$baserom" | grep -q "br$"; then
+
+            elif echo "$zip_list" | grep -q "\.br$"; then
                 echo "[INFO] Extracting new.dat.br..."
-                unzip -q "$baserom" -d build/baserom
+                7z x -y "$baserom" -obuild/baserom >/dev/null
                 rm -f "$baserom"
                 super_list=$(grep "add " build/baserom/dynamic_partitions_op_list | awk "{ print \$2 }")
                 for part in ${super_list}; do
                     brotli -d "build/baserom/$part.new.dat.br"
                     python3 "$work_dir/bin/Linux/x86_64/sdat2img.py" "build/baserom/$part.transfer.list" "build/baserom/$part.new.dat" "build/baserom/images/$part.img"
                 done
-            elif unzip -l "$baserom" | grep -qE "(^|/)super\.img\.zst$"; then
+
+            elif echo "$zip_list" | grep -qE "(^|/)super\.img\.zst$"; then
                 echo "[INFO] Extracting super.img.zst..."
-                unzip -j -q "$baserom" "*/super.img.zst" "super.img.zst" -d build/baserom/ 2>/dev/null || true
+                7z e -y "$baserom" "super.img.zst" -r -obuild/baserom >/dev/null
                 rm -f "$baserom"
 
                 if [ ! -s build/baserom/super.img.zst ]; then
@@ -126,9 +131,10 @@ jobs:
                     [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
                 done
                 super_list="system system_ext product vendor odm mi_ext"
-            elif unzip -l "$baserom" | grep -qE "(^|/)super\.img$"; then
+
+            elif echo "$zip_list" | grep -qE "(^|/)super\.img$"; then
                 echo "[INFO] Extracting single super.img..."
-                unzip -j -q "$baserom" "*/super.img" "super.img" -d build/baserom/ 2>/dev/null || true
+                7z e -y "$baserom" "super.img" -r -obuild/baserom >/dev/null
                 rm -f "$baserom"
 
                 if [ ! -s build/baserom/super.img ]; then
@@ -151,19 +157,20 @@ jobs:
                     [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
                 done
                 super_list="system system_ext product vendor odm mi_ext"
-            elif unzip -l "$baserom" | grep -q "super.img.*"; then
+
+            elif echo "$zip_list" | grep -q "super\.img\."; then
                 echo "[INFO] Extracting split super.img.*..."
-                unzip -q "$baserom" "*super.img*" -d build/baserom/
+                7z e -y "$baserom" "*super.img.*" -r -obuild/baserom >/dev/null
                 rm -f "$baserom"
-                super_dir=$(dirname $(find build/baserom -name "*super.img.0*" | head -n 1))
-                /usr/bin/simg2img ${super_dir}/*super.img.* build/baserom/super.img
-                rm -rf ${super_dir}/*super.img.*
+                /usr/bin/simg2img build/baserom/*super.img.* build/baserom/super.img
+                rm -f build/baserom/*super.img.*
                 python3 bin/lpunpack.py build/baserom/super.img build/baserom/images/
                 rm -f build/baserom/super.img
                 for i in build/baserom/images/*_a.img; do
                     [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
                 done
                 super_list="system system_ext product vendor odm mi_ext"
+
             else
                 echo "[ERROR] Định dạng ROM không hỗ trợ!"
                 exit 1
