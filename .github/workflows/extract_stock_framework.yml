@@ -1,0 +1,146 @@
+name: Extract Stock Framework Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_url:
+        description: 'Link tải ROM (Direct link/OTA zip/Gofile/Pixeldrain/GDrive)'
+        required: true
+      builder_name:
+        description: 'Tên người thực hiện'
+        required: false
+        default: 'Admin'
+
+jobs:
+  Extract-Stock-Framework:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          swap-size-mb: 1024
+          root-reserve-mb: 512
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+
+      - name: Clean All Unused file, application
+        run: |
+          docker rmi `docker images -q` || true
+          sudo apt-get -y purge azure-cli ghc* zulu* hhvm llvm* firefox google* dotnet* powershell mysql* php* || true
+          sudo apt-get -y autoremove --purge || true
+          sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android || true
+          sudo apt-get -y autoclean && sudo apt-get clean
+
+      - name: Checkout repository
+        uses: actions/checkout@main
+
+      - name: Set up Timezone
+        run: sudo timedatectl set-timezone Asia/Ho_Chi_Minh
+
+      - name: Install Dependencies
+        run: |
+          sudo bash setup.sh
+          sudo apt-get update -y
+          sudo apt-get install -y xmlstarlet aapt zipalign p7zip-full libc++1 libc++abi1 unzip aria2 p7zip-full zstd brotli
+          sudo chmod -R 777 bin/ *.sh
+
+      - name: Download & Unpack Stock Partitions
+        env:
+          INPUT_URL: ${{ inputs.input_url }}
+        run: |
+          sudo -E bash -c '
+            set -e
+            work_dir=$(pwd)
+            export PATH="$work_dir/bin/$(uname)/$(uname -m)/:$PATH"
+            source "$work_dir/functions.sh"
+
+            # 1. Tải ROM (bỏ qua đoạn check OS1/OS2/OS3 ở cuối getROM.sh để hỗ trợ mọi phiên bản ROM)
+            sed "/# ==================== NHẬN DIỆN OS ====================/,\$d" "$work_dir/bin/ddevice/getROM.sh" > /tmp/download_only.sh
+            source /tmp/download_only.sh "$INPUT_URL"
+
+            # Chuẩn hóa tên file zip
+            if [[ ! -f "$baserom" ]]; then
+                baserom=$(ls -S "$work_dir"/*.zip 2>/dev/null | head -n 1)
+            fi
+            echo "STOCK_BASEROM=$baserom" >> "$GITHUB_ENV"
+
+            rm -rf build/baserom/
+            mkdir -p build/baserom/images/ "$work_dir/bin/ddevice"
+
+            # 2. Giải nén theo định dạng ROM (payload / br / super.img)
+            if unzip -l "$baserom" | grep -q "payload.bin"; then
+                echo "[INFO] Extracting payload.bin..."
+                unzip -q "$baserom" payload.bin -d build/baserom
+                payload-extract extract -o build/baserom/images/ build/baserom/payload.bin
+                super_list="system system_ext product vendor odm mi_ext"
+            elif unzip -l "$baserom" | grep -q "br$"; then
+                echo "[INFO] Extracting new.dat.br..."
+                unzip -q "$baserom" -d build/baserom
+                super_list=$(grep "add " build/baserom/dynamic_partitions_op_list | awk "{ print \$2 }")
+                for part in ${super_list}; do
+                    brotli -d "build/baserom/$part.new.dat.br"
+                    python3 "$work_dir/bin/Linux/x86_64/sdat2img.py" "build/baserom/$part.transfer.list" "build/baserom/$part.new.dat" "build/baserom/images/$part.img"
+                done
+            elif unzip -l "$baserom" | grep -q "super.img.*"; then
+                echo "[INFO] Extracting super.img..."
+                unzip -q "$baserom" "*super.img*" -d build/baserom/
+                super_dir=$(dirname $(find build/baserom -name "*super.img.0*" | head -n 1))
+                /usr/bin/simg2img ${super_dir}/*super.img.* build/baserom/super.img
+                python3 bin/lpunpack.py build/baserom/super.img build/baserom/images/
+                for i in build/baserom/images/*_a.img; do
+                    [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
+                done
+                super_list="system system_ext product vendor odm mi_ext"
+            else
+                echo "[ERROR] Định dạng ROM không hỗ trợ!"
+                exit 1
+            fi
+
+            # 3. Bung các phân vùng cần thiết để lấy Framework & build.prop
+            for part in system system_ext product vendor; do
+                if [ -f "$work_dir/build/baserom/images/${part}.img" ]; then
+                    echo "[INFO] Unpacking ${part}.img..."
+                    extract_partition "$work_dir/build/baserom/images/${part}.img" "$work_dir/build/baserom/images"
+                fi
+            done
+          '
+
+      - name: Extract Stock Framework
+        run: |
+          sudo chmod +x frameworkExtract.sh
+          sudo -E bash frameworkExtract.sh stock "${{ env.STOCK_BASEROM }}"
+
+      - name: Upload Stock Framework to Artifacts
+        uses: actions/upload-artifact@v4
+        if: env.DUMP_STOCK_PATH != ''
+        with:
+          name: ${{ env.DUMP_STOCK_NAME }}
+          path: ${{ env.DUMP_STOCK_PATH }}
+          retention-days: 7
+
+      - name: Prepare Release Info
+        id: release_info
+        run: |
+          TAG_NAME="Stock_Framework_$(date +'%Y%m%d_%H%M%S')"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        if: env.DUMP_STOCK_PATH != ''
+        with:
+          tag_name: ${{ steps.release_info.outputs.tag_name }}
+          name: "Stock Framework: ${{ steps.release_info.outputs.tag_name }}"
+          body: |
+            ### Trích xuất Stock Framework tự động
+            - **File ROM:** `$(basename "${{ env.STOCK_BASEROM }}")`
+            - **URL nguồn:** `${{ inputs.input_url }}`
+            - **Người thực hiện:** `${{ inputs.builder_name }}`
+            - **Thời gian:** $(date +'%Y-%m-%d %H:%M:%S')
+          files: |
+            ${{ env.DUMP_STOCK_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
