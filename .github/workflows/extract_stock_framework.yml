@@ -6,6 +6,11 @@ on:
       input_url:
         description: 'Link tải ROM (Direct link/OTA zip/Gofile/Pixeldrain/GDrive)'
         required: true
+      include_settings:
+        description: 'Lấy thêm Settings.apk (system_ext/priv-app/Settings/Settings.apk)'
+        type: boolean
+        required: false
+        default: false
       builder_name:
         description: 'Tên người thực hiện'
         required: false
@@ -147,6 +152,35 @@ jobs:
           sudo chmod +x frameworkExtract.sh
           sudo -E bash frameworkExtract.sh stock "${{ env.STOCK_BASEROM }}"
 
+      - name: Append Settings.apk (Optional)
+        if: ${{ inputs.include_settings }}
+        run: |
+          sudo -E bash -c '
+            work_dir=$(pwd)
+            base_img_dir="$work_dir/build/baserom/images"
+            rel_path="system_ext/priv-app/Settings/Settings.apk"
+            src_file="$base_img_dir/$rel_path"
+
+            # Hỗ trợ trường hợp phân vùng lồng system_ext/system_ext/...
+            if [ ! -f "$src_file" ] && [ -f "$base_img_dir/system_ext/$rel_path" ]; then
+                src_file="$base_img_dir/system_ext/$rel_path"
+            fi
+
+            if [ -f "$src_file" ]; then
+                tmp_dir="/tmp/add_settings"
+                rm -rf "$tmp_dir"
+                mkdir -p "$tmp_dir/$(dirname "$rel_path")"
+                cp -f "$src_file" "$tmp_dir/$rel_path"
+                pushd "$tmp_dir" > /dev/null
+                zip -ur "$DUMP_STOCK_PATH" ./*
+                popd > /dev/null
+                rm -rf "$tmp_dir"
+                echo "[FOUND] Đã thêm $rel_path vào $DUMP_STOCK_NAME"
+            else
+                echo "[WARNING] Không tìm thấy file: $src_file"
+            fi
+          '
+
       - name: Upload Stock Framework to Artifacts
         uses: actions/upload-artifact@v4
         if: env.DUMP_STOCK_PATH != ''
@@ -172,6 +206,7 @@ jobs:
           body: |
             ### Trích xuất Framework tự động
             - **URL nguồn:** `${{ inputs.input_url }}`
+            - **Kèm Settings.apk:** `${{ inputs.include_settings }}`
             - **Người thực hiện:** `${{ inputs.builder_name }}`
             - **Thời gian:** `${{ steps.release_info.outputs.build_time }}`
           files: |
