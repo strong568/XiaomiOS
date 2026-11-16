@@ -53,6 +53,8 @@ jobs:
           sudo bash setup.sh
           sudo apt-get update -y
           sudo apt-get install -y xmlstarlet aapt zipalign p7zip-full libc++1 libc++abi1 unzip aria2 zstd brotli file android-sdk-libsparse-utils
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libc++.so.1 /usr/lib/x86_64-linux-gnu/libc++.so 2>/dev/null || true
+          sudo ldconfig
           sudo chmod -R 777 bin/ *.sh
 
       - name: Download & Unpack Stock Partitions
@@ -63,6 +65,7 @@ jobs:
             set -e
             work_dir=$(pwd)
             export PATH="$work_dir/bin/$(uname)/$(uname -m)/:$PATH"
+            export LD_LIBRARY_PATH="$work_dir/bin/$(uname)/$(uname -m)/lib:$work_dir/bin/$(uname)/$(uname -m)/:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
             source "$work_dir/functions.sh"
 
             # 1. Tải ROM (bỏ qua đoạn check OS1/OS2/OS3 ở cuối getROM.sh để hỗ trợ mọi phiên bản ROM)
@@ -107,7 +110,7 @@ jobs:
 
                 if file build/baserom/super.img | grep -q "Android sparse image"; then
                     echo "[INFO] Converting sparse super.img to raw..."
-                    simg2img build/baserom/super.img build/baserom/super_raw.img
+                    /usr/bin/simg2img build/baserom/super.img build/baserom/super_raw.img
                     rm -f build/baserom/super.img
                     mv -f build/baserom/super_raw.img build/baserom/super.img
                 fi
@@ -125,7 +128,7 @@ jobs:
                 unzip -q "$baserom" "*super.img*" -d build/baserom/
                 rm -f "$baserom"
                 super_dir=$(dirname $(find build/baserom -name "*super.img.0*" | head -n 1))
-                simg2img ${super_dir}/*super.img.* build/baserom/super.img
+                /usr/bin/simg2img ${super_dir}/*super.img.* build/baserom/super.img
                 rm -rf ${super_dir}/*super.img.*
                 python3 bin/lpunpack.py build/baserom/super.img build/baserom/images/
                 rm -f build/baserom/super.img
