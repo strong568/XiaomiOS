@@ -311,6 +311,8 @@ elif echo "$base_rom_code" | grep -q "OS2"; then
     ROM_OS="OS2"
 elif echo "$base_rom_code" | grep -q "OS3"; then
     ROM_OS="OS3"
+elif echo "$base_rom_code" | grep -qE "OS[4-9]"; then
+    ROM_OS="OS4"
 elif echo "$base_rom_code" | grep -q "V14"; then
     ROM_OS="MIUI"
 elif echo "$base_rom_code" | grep -q "V13"; then
@@ -322,6 +324,8 @@ else
         ROM_OS="OS2"
     elif echo "$baserom" | grep -q "OS3"; then
         ROM_OS="OS3"
+    elif echo "$baserom" | grep -qE "OS[4-9]"; then
+        ROM_OS="OS4"
     elif echo "$baserom" | grep -q "V14"; then
         ROM_OS="MIUI"
     else
@@ -329,6 +333,7 @@ else
         exit 1
     fi
 fi
+
 
 mkdir -p "$work_dir/bin/ddevice"
 echo "$base_rom_code" > "$work_dir/bin/ddevice/base_rom_code.txt"
