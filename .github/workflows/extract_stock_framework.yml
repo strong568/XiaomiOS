@@ -30,10 +30,9 @@ jobs:
       - name: Clean All Unused file, application
         run: |
           docker rmi `docker images -q` || true
-          sudo apt-get -y purge azure-cli ghc* zulu* hhvm llvm* firefox google* dotnet* powershell mysql* php* || true
-          sudo dpkg --purge --force-all mysql-server mysql-server-8.0 mysql-common php* 2>/dev/null || true
+          sudo apt-get -y purge azure-cli ghc* zulu* hhvm llvm* firefox google* dotnet* powershell php* || true
           sudo apt-get -y autoremove --purge || true
-          sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android || true
+          sudo rm -rf /usr/share/dotnet /etc/php /usr/local/lib/android || true
           sudo apt-get -y autoclean && sudo apt-get clean
 
       - name: Checkout repository
@@ -44,12 +43,12 @@ jobs:
 
       - name: Install Dependencies
         run: |
+          sudo rm -f /var/lib/dpkg/info/mysql*
           sudo dpkg --configure -a || true
           sudo bash setup.sh
           sudo apt-get update -y
           sudo apt-get install -y xmlstarlet aapt zipalign p7zip-full libc++1 libc++abi1 unzip aria2 zstd brotli
           sudo chmod -R 777 bin/ *.sh
-
 
       - name: Download & Unpack Stock Partitions
         env:
