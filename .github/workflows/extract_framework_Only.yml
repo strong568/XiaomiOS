@@ -97,7 +97,7 @@ jobs:
                 if [[ "$url" =~ /folders/ ]]; then
                   python3 -m gdown --folder "$url" -O "$work_dir/"
                 else
-                  python3 -m gdown --fuzzy "$url" -O "$work_dir/"
+                  python3 -m gdown "$url" -O "$work_dir/"
                 fi
 
               elif [[ "$url" =~ pixeldrain\.com/(u|l)/([a-zA-Z0-9]+) ]]; then
@@ -354,3 +354,4 @@ jobs:
             ${{ env.DUMP_STOCK_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
