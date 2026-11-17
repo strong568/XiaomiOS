@@ -1,0 +1,329 @@
+name: Extract Framework Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_url:
+        description: 'Link tải ROM (Direct link / OTA zip / GDrive / Pixeldrain / Gofile / MediaFire / SourceForge...)'
+        required: true
+      include_settings:
+        description: 'Lấy thêm Settings.apk (system_ext/priv-app/Settings/Settings.apk)'
+        type: boolean
+        required: false
+        default: false
+      include_product_overlay:
+        description: 'Lấy thêm product/overlay (product/overlay)'
+        type: boolean
+        required: false
+        default: false
+      include_product_etc:
+        description: 'Lấy thêm product/etc (product/etc)'
+        type: boolean
+        required: false
+        default: false
+      builder_name:
+        description: 'Tên người thực hiện / Ghi chú đặc tính ROM (VD: Admin - HyperOS Mod / EU / Port...)'
+        required: false
+        default: 'Admin'
+
+jobs:
+  Extract-Framework:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          swap-size-mb: 1024
+          root-reserve-mb: 512
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+
+      - name: Clean All Unused file, application
+        run: |
+          docker rmi `docker images -q` || true
+          sudo apt-get -y purge azure-cli ghc* zulu* hhvm llvm* firefox google* dotnet* powershell php* || true
+          sudo apt-get -y autoremove --purge || true
+          sudo rm -rf /usr/share/dotnet /etc/php /usr/local/lib/android || true
+          sudo apt-get -y autoclean && sudo apt-get clean
+
+      - name: Checkout repository
+        uses: actions/checkout@main
+
+      - name: Set up Timezone
+        run: sudo timedatectl set-timezone Asia/Ho_Chi_Minh
+
+      - name: Install Dependencies
+        run: |
+          sudo rm -f /var/lib/dpkg/info/mysql*
+          sudo dpkg --configure -a || true
+          sudo bash setup.sh
+          sudo apt-get update -y
+          sudo apt-get install -y xmlstarlet aapt zipalign p7zip-full libc++1 libc++abi1 unzip aria2 zstd brotli file android-sdk-libsparse-utils curl jq python3-pip
+          pip3 install -q gdown || sudo pip3 install --break-system-packages -q gdown || true
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libc++.so.1 /usr/lib/x86_64-linux-gnu/libc++.so 2>/dev/null || true
+          sudo ldconfig
+          sudo chmod -R 777 bin/ *.sh
+
+      - name: Download & Unpack Partitions
+        env:
+          INPUT_URL: ${{ inputs.input_url }}
+        run: |
+          sudo -E bash -c '
+            set -e
+            work_dir=$(pwd)
+            export PATH="$work_dir/bin/$(uname)/$(uname -m)/:$PATH"
+            export LD_LIBRARY_PATH="$work_dir/bin/$(uname)/$(uname -m)/lib:$work_dir/bin/$(uname)/$(uname -m)/:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
+            source "$work_dir/functions.sh"
+
+            # 1. Bộ tải đa năng hỗ trợ mọi loại link
+            download_universal_rom() {
+              local url="$1"
+              echo "[INFO] Đang xử lý link tải: $url"
+
+              if [[ "$url" =~ drive\.google\.com ]]; then
+                echo "[INFO] Nhận diện link Google Drive..."
+                gdown --fuzzy "$url" -O "$work_dir/" || gdown --folder "$url" -O "$work_dir/"
+
+              elif [[ "$url" =~ pixeldrain\.com/(u|l)/([a-zA-Z0-9]+) ]]; then
+                local type="${BASH_REMATCH[1]}"
+                local id="${BASH_REMATCH[2]}"
+                echo "[INFO] Nhận diện link Pixeldrain ($id)..."
+                if [[ "$type" == "u" ]]; then
+                  aria2c -x 16 -s 16 -k 1M --content-disposition "https://pixeldrain.com/api/file/${id}?download" -d "$work_dir"
+                else
+                  aria2c -x 16 -s 16 -k 1M --content-disposition "https://pixeldrain.com/api/list/${id}/zip" -d "$work_dir"
+                fi
+
+              elif [[ "$url" =~ gofile\.io/d/([a-zA-Z0-9]+) ]]; then
+                local content_id="${BASH_REMATCH[1]}"
+                echo "[INFO] Nhận diện link Gofile ($content_id)..."
+                local token=$(curl -s -X POST "https://api.gofile.io/accounts" | jq -r ".data.token")
+                local dl_link=$(curl -s -H "Authorization: Bearer $token" "https://api.gofile.io/contents/${content_id}?wt=4fd6sg89d7s6" | jq -r ".data.children | to_entries[0].value.link")
+                aria2c -x 16 -s 16 -k 1M --header="Cookie: accountToken=$token" --content-disposition "$dl_link" -d "$work_dir"
+
+              elif [[ "$url" =~ mediafire\.com ]]; then
+                echo "[INFO] Nhận diện link MediaFire..."
+                local direct_mf=$(curl -sL "$url" | grep -oE "https://download[0-9]+\.mediafire\.com/[^\"]+" | head -n 1)
+                aria2c -x 16 -s 16 -k 1M --content-disposition "$direct_mf" -d "$work_dir"
+
+              elif [[ "$url" =~ sourceforge\.net ]]; then
+                echo "[INFO] Nhận diện link SourceForge..."
+                local sf_url="${url%/download}"
+                aria2c -x 16 -s 16 -k 1M --content-disposition -U "Mozilla/5.0" "$sf_url" -d "$work_dir"
+
+              else
+                if [ -f "$work_dir/bin/ddevice/getROM.sh" ]; then
+                  sed "/# ==================== NHẬN DIỆN OS ====================/,\$d" "$work_dir/bin/ddevice/getROM.sh" > /tmp/download_only.sh
+                  source /tmp/download_only.sh "$url" || aria2c -x 16 -s 16 -k 1M --content-disposition -U "Mozilla/5.0" "$url" -d "$work_dir"
+                else
+                  aria2c -x 16 -s 16 -k 1M --content-disposition -U "Mozilla/5.0" "$url" -d "$work_dir"
+                fi
+              fi
+            }
+
+            download_universal_rom "$INPUT_URL"
+
+            # Tìm file ROM lớn nhất vừa tải về (hỗ trợ .zip, .tgz, .tar.gz, .bin, .img)
+            if [[ ! -f "$baserom" ]]; then
+                baserom=$(find "$work_dir" -maxdepth 2 -type f \( -iname "*.zip" -o -iname "*.tgz" -o -iname "*.tar.gz" -o -iname "*.bin" -o -iname "*.img" \) ! -name "magisk*" ! -name "twrp*" -printf "%s %p\n" 2>/dev/null | sort -nr | head -n 1 | cut -d" " -f2-)
+            fi
+
+            if [[ ! -f "$baserom" ]]; then
+                echo "[ERROR] Không tìm thấy file ROM sau khi tải! Kiểm tra lại link đầu vào."
+                exit 1
+            fi
+
+            echo "[INFO] File ROM đã tải: $baserom"
+            echo "STOCK_BASEROM=$baserom" >> "$GITHUB_ENV"
+
+            rm -rf build/baserom/
+            mkdir -p build/baserom/images/ "$work_dir/bin/ddevice"
+
+            # 2. Giải nén theo định dạng ROM
+            if [[ "$baserom" =~ \.(tgz|tar\.gz)$ ]]; then
+                echo "[INFO] Extracting Fastboot ROM (.tgz/.tar.gz)..."
+                tar -xzf "$baserom" -C build/baserom/
+                rm -f "$baserom"
+                super_img=$(find build/baserom/ -name "super.img" | head -n 1)
+                if [ -n "$super_img" ]; then
+                    if file "$super_img" | grep -q "Android sparse image"; then
+                        /usr/bin/simg2img "$super_img" build/baserom/super_raw.img
+                        mv -f build/baserom/super_raw.img "$super_img"
+                    fi
+                    python3 bin/lpunpack.py "$super_img" build/baserom/images/
+                    for i in build/baserom/images/*_a.img; do
+                        [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
+                    done
+                fi
+            elif [[ "$baserom" =~ \.bin$ ]]; then
+                echo "[INFO] Extracting direct payload.bin..."
+                payload-extract extract -o build/baserom/images/ "$baserom"
+                rm -f "$baserom"
+            else
+                zip_list=$(7z l -slt "$baserom" | grep "^Path = " | sed "s/^Path = //")
+
+                if echo "$zip_list" | grep -q "payload\.bin$"; then
+                    echo "[INFO] Extracting payload.bin..."
+                    7z e -y "$baserom" "payload.bin" -r -obuild/baserom >/dev/null
+                    rm -f "$baserom"
+                    payload-extract extract -o build/baserom/images/ build/baserom/payload.bin
+                    rm -f build/baserom/payload.bin
+
+                elif echo "$zip_list" | grep -q "\.br$"; then
+                    echo "[INFO] Extracting new.dat.br..."
+                    7z x -y "$baserom" -obuild/baserom >/dev/null
+                    rm -f "$baserom"
+                    super_list=$(grep "add " build/baserom/dynamic_partitions_op_list | awk "{ print \$2 }")
+                    for part in ${super_list}; do
+                        brotli -d "build/baserom/$part.new.dat.br"
+                        python3 "$work_dir/bin/Linux/x86_64/sdat2img.py" "build/baserom/$part.transfer.list" "build/baserom/$part.new.dat" "build/baserom/images/$part.img"
+                    done
+
+                elif echo "$zip_list" | grep -q "super\.img\.zst$"; then
+                    echo "[INFO] Extracting super.img.zst..."
+                    7z e -y "$baserom" "super.img.zst" -r -obuild/baserom >/dev/null
+                    rm -f "$baserom"
+                    zstd -d --rm build/baserom/super.img.zst -o build/baserom/super.img
+                    if file build/baserom/super.img | grep -q "Android sparse image"; then
+                        /usr/bin/simg2img build/baserom/super.img build/baserom/super_raw.img
+                        rm -f build/baserom/super.img
+                        mv -f build/baserom/super_raw.img build/baserom/super.img
+                    fi
+                    python3 bin/lpunpack.py build/baserom/super.img build/baserom/images/
+                    rm -f build/baserom/super.img
+                    for i in build/baserom/images/*_a.img; do
+                        [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
+                    done
+
+                elif echo "$zip_list" | grep -q "super\.img$"; then
+                    echo "[INFO] Extracting single super.img..."
+                    7z e -y "$baserom" "super.img" -r -obuild/baserom >/dev/null
+                    rm -f "$baserom"
+                    if file build/baserom/super.img | grep -q "Android sparse image"; then
+                        /usr/bin/simg2img build/baserom/super.img build/baserom/super_raw.img
+                        rm -f build/baserom/super.img
+                        mv -f build/baserom/super_raw.img build/baserom/super.img
+                    fi
+                    python3 bin/lpunpack.py build/baserom/super.img build/baserom/images/
+                    rm -f build/baserom/super.img
+                    for i in build/baserom/images/*_a.img; do
+                        [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
+                    done
+
+                elif echo "$zip_list" | grep -q "super\.img\."; then
+                    echo "[INFO] Extracting split super.img.*..."
+                    7z e -y "$baserom" "*super.img.*" -r -obuild/baserom >/dev/null
+                    rm -f "$baserom"
+                    /usr/bin/simg2img build/baserom/*super.img.* build/baserom/super.img
+                    rm -f build/baserom/*super.img.*
+                    python3 bin/lpunpack.py build/baserom/super.img build/baserom/images/
+                    rm -f build/baserom/super.img
+                    for i in build/baserom/images/*_a.img; do
+                        [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
+                    done
+
+                else
+                    echo "[ERROR] Định dạng ROM không hỗ trợ! Danh sách file trong gói:"
+                    echo "$zip_list" | head -n 20
+                    exit 1
+                fi
+            fi
+
+            # 3. Bung các phân vùng cần thiết
+            for part in system system_ext product vendor; do
+                if [ -f "$work_dir/build/baserom/images/${part}.img" ]; then
+                    echo "[INFO] Unpacking ${part}.img..."
+                    extract_partition "$work_dir/build/baserom/images/${part}.img" "$work_dir/build/baserom/images"
+                fi
+            done
+          '
+
+      - name: Extract Framework
+        run: |
+          sudo chmod +x frameworkExtract.sh
+          sudo -E bash frameworkExtract.sh stock "${{ env.STOCK_BASEROM }}"
+
+      - name: Append Optional Files & Folders
+        if: ${{ inputs.include_settings || inputs.include_product_overlay || inputs.include_product_etc }}
+        env:
+          INC_SETTINGS: ${{ inputs.include_settings }}
+          INC_OVERLAY: ${{ inputs.include_product_overlay }}
+          INC_ETC: ${{ inputs.include_product_etc }}
+        run: |
+          sudo -E bash -c '
+            work_dir=$(pwd)
+            base_img_dir="$work_dir/build/baserom/images"
+            tmp_dir="/tmp/add_optional_items"
+            rm -rf "$tmp_dir"
+            mkdir -p "$tmp_dir"
+            has_added=false
+
+            copy_item() {
+              local rel_path="$1"
+              local part_prefix="${rel_path%%/*}"
+              local src_item="$base_img_dir/$rel_path"
+
+              if [ ! -e "$src_item" ] && [ -e "$base_img_dir/$part_prefix/$rel_path" ]; then
+                src_item="$base_img_dir/$part_prefix/$rel_path"
+              fi
+
+              if [ -e "$src_item" ]; then
+                mkdir -p "$tmp_dir/$(dirname "$rel_path")"
+                cp -rf "$src_item" "$tmp_dir/$rel_path"
+                echo "[FOUND] Đã thêm $rel_path vào gói Framework"
+                has_added=true
+              else
+                echo "[WARNING] Không tìm thấy đường dẫn: $rel_path"
+              fi
+            }
+
+            [ "$INC_SETTINGS" == "true" ] && copy_item "system_ext/priv-app/Settings/Settings.apk"
+            [ "$INC_OVERLAY" == "true" ] && copy_item "product/overlay"
+            [ "$INC_ETC" == "true" ] && copy_item "product/etc"
+
+            if [ "$has_added" == "true" ]; then
+              pushd "$tmp_dir" > /dev/null
+              zip -ur "$DUMP_STOCK_PATH" ./*
+              popd > /dev/null
+            fi
+            rm -rf "$tmp_dir"
+          '
+
+      - name: Upload Framework to Artifacts
+        uses: actions/upload-artifact@v4
+        if: env.DUMP_STOCK_PATH != ''
+        with:
+          name: ${{ env.DUMP_STOCK_NAME }}
+          path: ${{ env.DUMP_STOCK_PATH }}
+          retention-days: 7
+
+      - name: Prepare Release Info
+        id: release_info
+        run: |
+          TAG_NAME="Framework_$(date +'%Y%m%d_%H%M%S')"
+          BUILD_TIME="$(date +'%Y-%m-%d %H:%M:%S')"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "build_time=$BUILD_TIME" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        if: env.DUMP_STOCK_PATH != ''
+        with:
+          tag_name: ${{ steps.release_info.outputs.tag_name }}
+          name: "Framework (${{ inputs.builder_name }}) - ${{ steps.release_info.outputs.tag_name }}"
+          body: |
+            ### Trích xuất Framework tự động
+            - **Người thực hiện / Đặc tính ROM:** `${{ inputs.builder_name }}`
+            - **URL nguồn:** `${{ inputs.input_url }}`
+            - **Kèm Settings.apk:** `${{ inputs.include_settings }}`
+            - **Kèm product/overlay:** `${{ inputs.include_product_overlay }}`
+            - **Kèm product/etc:** `${{ inputs.include_product_etc }}`
+            - **Thời gian:** `${{ steps.release_info.outputs.build_time }}`
+          files: |
+            ${{ env.DUMP_STOCK_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
