@@ -11,7 +11,7 @@ on:
         required: false
         default: 'Custom_ROM'
       rom_changelog:
-        description: 'Changelog & Note (Dùng \n để xuống dòng. VD: Changelog ROM :\n- optimize surfaceflingger\n- fix brightness\n\nNOTE :\ndo not enable "disable app signature"!!)'
+        description: 'Changelog & Note (Dùng \n để xuống dòng)'
         required: false
         default: ''
       include_settings:
@@ -71,7 +71,7 @@ jobs:
           sudo bash setup.sh
           sudo apt-get update -y
           sudo apt-get install -y xmlstarlet aapt zipalign p7zip-full libc++1 libc++abi1 unzip aria2 zstd brotli file android-sdk-libsparse-utils curl jq python3-pip
-          pip3 install -q gdown || sudo pip3 install --break-system-packages -q gdown || true
+          sudo pip3 install --break-system-packages -U gdown || sudo pip3 install -U gdown
           sudo ln -sf /usr/lib/x86_64-linux-gnu/libc++.so.1 /usr/lib/x86_64-linux-gnu/libc++.so 2>/dev/null || true
           sudo ldconfig
           sudo chmod -R 777 bin/ *.sh
@@ -83,7 +83,7 @@ jobs:
           sudo -E bash -c '
             set -e
             work_dir=$(pwd)
-            export PATH="$work_dir/bin/$(uname)/$(uname -m)/:$PATH"
+            export PATH="/usr/local/bin:$HOME/.local/bin:$work_dir/bin/$(uname)/$(uname -m)/:$PATH"
             export LD_LIBRARY_PATH="$work_dir/bin/$(uname)/$(uname -m)/lib:$work_dir/bin/$(uname)/$(uname -m)/:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
             source "$work_dir/functions.sh"
 
@@ -94,7 +94,11 @@ jobs:
 
               if [[ "$url" =~ drive\.google\.com ]]; then
                 echo "[INFO] Nhận diện link Google Drive..."
-                gdown --fuzzy "$url" -O "$work_dir/" || gdown --folder "$url" -O "$work_dir/"
+                if [[ "$url" =~ /folders/ ]]; then
+                  python3 -m gdown --folder "$url" -O "$work_dir/"
+                else
+                  python3 -m gdown --fuzzy "$url" -O "$work_dir/"
+                fi
 
               elif [[ "$url" =~ pixeldrain\.com/(u|l)/([a-zA-Z0-9]+) ]]; then
                 local type="${BASH_REMATCH[1]}"
@@ -141,7 +145,7 @@ jobs:
             fi
 
             if [[ ! -f "$baserom" ]]; then
-                echo "[ERROR] Không tìm thấy file ROM sau khi tải! Kiểm tra lại link đầu vào."
+                echo "[ERROR] Không tìm thấy file ROM sau khi tải! Kiểm tra lại link đầu vào hoặc quyền chia sẻ công khai của Google Drive."
                 exit 1
             fi
 
@@ -312,19 +316,32 @@ jobs:
       - name: Prepare Release Info
         id: release_info
         env:
+          ROM_TITLE: ${{ inputs.rom_title }}
           RAW_CHANGELOG: ${{ inputs.rom_changelog }}
+          INPUT_URL: ${{ inputs.input_url }}
+          INC_SETTINGS: ${{ inputs.include_settings }}
+          INC_OVERLAY: ${{ inputs.include_product_overlay }}
+          INC_ETC: ${{ inputs.include_product_etc }}
+          BUILDER_NAME: ${{ inputs.builder_name }}
         run: |
           TAG_NAME="Framework_$(date +'%Y%m%d_%H%M%S')"
           BUILD_TIME="$(date +'%Y-%m-%d %H:%M:%S')"
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
-          echo "build_time=$BUILD_TIME" >> "$GITHUB_OUTPUT"
 
-          # Chuyển ký tự \n thành xuống dòng thật và lưu vào file markdown tạm
-          if [ -n "$RAW_CHANGELOG" ]; then
-            printf "### Thông tin & Ghi chú bản ROM\n\n%b\n\n---\n" "$RAW_CHANGELOG" > /tmp/release_notes.md
-          else
-            touch /tmp/release_notes.md
-          fi
+          {
+            echo "**Bản ROM:** \`$ROM_TITLE\`"
+            echo ""
+            if [ -n "$RAW_CHANGELOG" ]; then
+              printf "%b\n\n---\n" "$RAW_CHANGELOG"
+            fi
+            echo "### Chi tiết trích xuất"
+            echo "- **URL nguồn:** \`$INPUT_URL\`"
+            echo "- **Kèm Settings.apk:** \`$INC_SETTINGS\`"
+            echo "- **Kèm product/overlay:** \`$INC_OVERLAY\`"
+            echo "- **Kèm product/etc:** \`$INC_ETC\`"
+            echo "- **Người thực hiện:** \`$BUILDER_NAME\`"
+            echo "- **Thời gian:** \`$BUILD_TIME\`"
+          } > /tmp/release_body.md
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
@@ -332,17 +349,7 @@ jobs:
         with:
           tag_name: ${{ steps.release_info.outputs.tag_name }}
           name: "Framework - ${{ inputs.rom_title }}"
-          body: |
-            **Bản ROM:** `${{ inputs.rom_title }}`
-
-            $(cat /tmp/release_notes.md)
-            ### Chi tiết trích xuất
-            - **URL nguồn:** `${{ inputs.input_url }}`
-            - **Kèm Settings.apk:** `${{ inputs.include_settings }}`
-            - **Kèm product/overlay:** `${{ inputs.include_product_overlay }}`
-            - **Kèm product/etc:** `${{ inputs.include_product_etc }}`
-            - **Người thực hiện:** `${{ inputs.builder_name }}`
-            - **Thời gian:** `${{ steps.release_info.outputs.build_time }}`
+          body_path: /tmp/release_body.md
           files: |
             ${{ env.DUMP_STOCK_PATH }}
         env:
