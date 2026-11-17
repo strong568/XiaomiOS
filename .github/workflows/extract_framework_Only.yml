@@ -6,6 +6,14 @@ on:
       input_url:
         description: 'Link tải ROM (Direct link / OTA zip / GDrive / Pixeldrain / Gofile / MediaFire / SourceForge...)'
         required: true
+      rom_title:
+        description: 'Tên/Mã bản ROM (VD: Munch_kiproject-HOS4-port_OS4.0.2.0.XPKMIXM_encrypt_ki-ker_v2_20261116)'
+        required: false
+        default: 'Custom_ROM'
+      rom_changelog:
+        description: 'Changelog & Note (Dùng \n để xuống dòng. VD: Changelog ROM :\n- optimize surfaceflingger\n- fix brightness\n\nNOTE :\ndo not enable "disable app signature"!!)'
+        required: false
+        default: ''
       include_settings:
         description: 'Lấy thêm Settings.apk (system_ext/priv-app/Settings/Settings.apk)'
         type: boolean
@@ -22,7 +30,7 @@ on:
         required: false
         default: false
       builder_name:
-        description: 'Tên người thực hiện / Ghi chú đặc tính ROM (VD: Admin - HyperOS Mod / EU / Port...)'
+        description: 'Tên người thực hiện'
         required: false
         default: 'Admin'
 
@@ -127,7 +135,7 @@ jobs:
 
             download_universal_rom "$INPUT_URL"
 
-            # Tìm file ROM lớn nhất vừa tải về (hỗ trợ .zip, .tgz, .tar.gz, .bin, .img)
+            # Tìm file ROM lớn nhất vừa tải về
             if [[ ! -f "$baserom" ]]; then
                 baserom=$(find "$work_dir" -maxdepth 2 -type f \( -iname "*.zip" -o -iname "*.tgz" -o -iname "*.tar.gz" -o -iname "*.bin" -o -iname "*.img" \) ! -name "magisk*" ! -name "twrp*" -printf "%s %p\n" 2>/dev/null | sort -nr | head -n 1 | cut -d" " -f2-)
             fi
@@ -303,25 +311,37 @@ jobs:
 
       - name: Prepare Release Info
         id: release_info
+        env:
+          RAW_CHANGELOG: ${{ inputs.rom_changelog }}
         run: |
           TAG_NAME="Framework_$(date +'%Y%m%d_%H%M%S')"
           BUILD_TIME="$(date +'%Y-%m-%d %H:%M:%S')"
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
           echo "build_time=$BUILD_TIME" >> "$GITHUB_OUTPUT"
 
+          # Chuyển ký tự \n thành xuống dòng thật và lưu vào file markdown tạm
+          if [ -n "$RAW_CHANGELOG" ]; then
+            printf "### Thông tin & Ghi chú bản ROM\n\n%b\n\n---\n" "$RAW_CHANGELOG" > /tmp/release_notes.md
+          else
+            touch /tmp/release_notes.md
+          fi
+
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         if: env.DUMP_STOCK_PATH != ''
         with:
           tag_name: ${{ steps.release_info.outputs.tag_name }}
-          name: "Framework (${{ inputs.builder_name }}) - ${{ steps.release_info.outputs.tag_name }}"
+          name: "Framework - ${{ inputs.rom_title }}"
           body: |
-            ### Trích xuất Framework tự động
-            - **Người thực hiện / Đặc tính ROM:** `${{ inputs.builder_name }}`
+            **Bản ROM:** `${{ inputs.rom_title }}`
+
+            $(cat /tmp/release_notes.md)
+            ### Chi tiết trích xuất
             - **URL nguồn:** `${{ inputs.input_url }}`
             - **Kèm Settings.apk:** `${{ inputs.include_settings }}`
             - **Kèm product/overlay:** `${{ inputs.include_product_overlay }}`
             - **Kèm product/etc:** `${{ inputs.include_product_etc }}`
+            - **Người thực hiện:** `${{ inputs.builder_name }}`
             - **Thời gian:** `${{ steps.release_info.outputs.build_time }}`
           files: |
             ${{ env.DUMP_STOCK_PATH }}
