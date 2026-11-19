@@ -80,8 +80,10 @@ jobs:
         env:
           INPUT_URL: ${{ inputs.input_url }}
         run: |
-          sudo -E bash -c '
+          sudo bash -c '
             set -e
+            INPUT_URL="$1"
+            GH_ENV="$2"
             work_dir=$(pwd)
             export PATH="/usr/local/bin:$HOME/.local/bin:$work_dir/bin/$(uname)/$(uname -m)/:$PATH"
             export LD_LIBRARY_PATH="$work_dir/bin/$(uname)/$(uname -m)/lib:$work_dir/bin/$(uname)/$(uname -m)/:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
@@ -150,7 +152,7 @@ jobs:
             fi
 
             echo "[INFO] File ROM đã tải: $baserom"
-            echo "STOCK_BASEROM=$baserom" >> "$GITHUB_ENV"
+            echo "STOCK_BASEROM=$baserom" >> "$GH_ENV"
 
             rm -rf build/baserom/
             mkdir -p build/baserom/images/ "$work_dir/bin/ddevice"
@@ -252,12 +254,12 @@ jobs:
                     extract_partition "$work_dir/build/baserom/images/${part}.img" "$work_dir/build/baserom/images"
                 fi
             done
-          '
+          ' _ "$INPUT_URL" "$GITHUB_ENV"
 
       - name: Extract Framework
         run: |
           sudo chmod +x frameworkExtract.sh
-          sudo -E bash frameworkExtract.sh stock "${{ env.STOCK_BASEROM }}"
+          sudo env GITHUB_ENV="$GITHUB_ENV" GITHUB_OUTPUT="$GITHUB_OUTPUT" bash frameworkExtract.sh stock "${{ env.STOCK_BASEROM }}"
 
       - name: Append Optional Files & Folders
         if: ${{ inputs.include_settings || inputs.include_product_overlay || inputs.include_product_etc }}
@@ -266,44 +268,49 @@ jobs:
           INC_OVERLAY: ${{ inputs.include_product_overlay }}
           INC_ETC: ${{ inputs.include_product_etc }}
         run: |
-          sudo -E bash -c '
-            work_dir=$(pwd)
-            base_img_dir="$work_dir/build/baserom/images"
-            tmp_dir="/tmp/add_optional_items"
-            rm -rf "$tmp_dir"
-            mkdir -p "$tmp_dir"
-            has_added=false
+          sudo env \
+            INC_SETTINGS="$INC_SETTINGS" \
+            INC_OVERLAY="$INC_OVERLAY" \
+            INC_ETC="$INC_ETC" \
+            DUMP_STOCK_PATH="${{ env.DUMP_STOCK_PATH }}" \
+            bash -c '
+              work_dir=$(pwd)
+              base_img_dir="$work_dir/build/baserom/images"
+              tmp_dir="/tmp/add_optional_items"
+              rm -rf "$tmp_dir"
+              mkdir -p "$tmp_dir"
+              has_added=false
 
-            copy_item() {
-              local rel_path="$1"
-              local part_prefix="${rel_path%%/*}"
-              local src_item="$base_img_dir/$rel_path"
+              copy_item() {
+                local rel_path="$1"
+                local part_prefix="${rel_path%%/*}"
+                local src_item="$base_img_dir/$rel_path"
 
-              if [ ! -e "$src_item" ] && [ -e "$base_img_dir/$part_prefix/$rel_path" ]; then
-                src_item="$base_img_dir/$part_prefix/$rel_path"
+                if [ ! -e "$src_item" ] && [ -e "$base_img_dir/$part_prefix/$rel_path" ]; then
+                  src_item="$base_img_dir/$part_prefix/$rel_path"
+                fi
+
+                if [ -e "$src_item" ]; then
+                  mkdir -p "$tmp_dir/$(dirname "$rel_path")"
+                  cp -rf "$src_item" "$tmp_dir/$rel_path"
+                  echo "[FOUND] Đã thêm $rel_path vào gói Framework"
+                  has_added=true
+                else
+                  echo "[WARNING] Không tìm thấy đường dẫn: $rel_path"
+                fi
+              }
+
+              [ "$INC_SETTINGS" == "true" ] && copy_item "system_ext/priv-app/Settings/Settings.apk"
+              [ "$INC_OVERLAY" == "true" ] && copy_item "product/overlay"
+              [ "$INC_ETC" == "true" ] && copy_item "product/etc"
+
+              if [ "$has_added" == "true" ]; then
+                pushd "$tmp_dir" > /dev/null
+                zip -ur "$DUMP_STOCK_PATH" ./*
+                popd > /dev/null
               fi
-
-              if [ -e "$src_item" ]; then
-                mkdir -p "$tmp_dir/$(dirname "$rel_path")"
-                cp -rf "$src_item" "$tmp_dir/$rel_path"
-                echo "[FOUND] Đã thêm $rel_path vào gói Framework"
-                has_added=true
-              else
-                echo "[WARNING] Không tìm thấy đường dẫn: $rel_path"
-              fi
-            }
-
-            [ "$INC_SETTINGS" == "true" ] && copy_item "system_ext/priv-app/Settings/Settings.apk"
-            [ "$INC_OVERLAY" == "true" ] && copy_item "product/overlay"
-            [ "$INC_ETC" == "true" ] && copy_item "product/etc"
-
-            if [ "$has_added" == "true" ]; then
-              pushd "$tmp_dir" > /dev/null
-              zip -ur "$DUMP_STOCK_PATH" ./*
-              popd > /dev/null
-            fi
-            rm -rf "$tmp_dir"
-          '
+              rm -rf "$tmp_dir"
+            '
 
       - name: Upload Framework to Artifacts
         uses: actions/upload-artifact@v4
