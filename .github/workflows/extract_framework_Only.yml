@@ -58,7 +58,6 @@ jobs:
           sudo apt-get -y autoremove --purge || true
           sudo rm -rf /usr/share/dotnet /etc/php /usr/local/lib/android /opt/hostedtoolcache/CodeQL || true
           sudo apt-get -y autoclean && sudo apt-get clean
-          df -h
 
       - name: Checkout repository
         uses: actions/checkout@main
@@ -68,12 +67,15 @@ jobs:
 
       - name: Install Dependencies
         run: |
+          export DEBIAN_FRONTEND=noninteractive
           sudo rm -f /var/lib/dpkg/info/mysql*
+          echo "set man-db/auto-update false" | sudo debconf-communicate
+          sudo dpkg-reconfigure -f noninteractive man-db || true
           sudo dpkg --configure -a || true
           sudo bash setup.sh
           sudo apt-get update -y
-          sudo apt-get install -y xmlstarlet aapt zipalign p7zip-full libc++1 libc++abi1 unzip aria2 zstd brotli file android-sdk-libsparse-utils curl jq python3-pip
-          sudo pip3 install --break-system-packages -U gdown || sudo pip3 install -U gdown
+          sudo apt-get install -y --no-install-recommends xmlstarlet aapt zipalign p7zip-full libarchive-tools libc++1 libc++abi1 unzip aria2 zstd brotli file android-sdk-libsparse-utils curl jq python3-pip
+          sudo pip3 install --break-system-packages --no-cache-dir -q gdown || sudo pip3 install --no-cache-dir -q gdown
           sudo ln -sf /usr/lib/x86_64-linux-gnu/libc++.so.1 /usr/lib/x86_64-linux-gnu/libc++.so 2>/dev/null || true
           sudo ldconfig
           sudo chmod -R 777 bin/ *.sh
@@ -91,10 +93,24 @@ jobs:
             export LD_LIBRARY_PATH="$work_dir/bin/$(uname)/$(uname -m)/lib:$work_dir/bin/$(uname)/$(uname -m)/:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
             source "$work_dir/functions.sh"
 
-            # Vá lỗi slice index trên Python 3.12+ cho lpunpack.py (nếu cần dùng fallback)
             if [ -f "$work_dir/bin/lpunpack.py" ]; then
               sed -i "s/buffer\[0:self\.size\]/buffer[0:int(self.size)]/g" "$work_dir/bin/lpunpack.py" || true
             fi
+
+            # Hàm giải nén file đơn trong Zip64 an toàn (tránh lỗi Headers Error của p7zip với file > 4GB)
+            extract_from_zip() {
+              local zip_file="$1"
+              local target_pattern="$2"
+              local out_dir="$3"
+              echo "[INFO] Extracting $target_pattern using bsdtar/unzip..."
+              if command -v bsdtar >/dev/null 2>&1; then
+                bsdtar -xvf "$zip_file" -C "$out_dir" --include="*${target_pattern}" || unzip -o -j "$zip_file" "*${target_pattern}" -d "$out_dir" || 7z e -y "$zip_file" "${target_pattern}" -r -o"$out_dir"
+              else
+                unzip -o -j "$zip_file" "*${target_pattern}" -d "$out_dir" || 7z e -y "$zip_file" "${target_pattern}" -r -o"$out_dir"
+              fi
+              # Nếu bsdtar giữ cấu trúc thư mục con, đưa file ra ngoài root của out_dir
+              find "$out_dir" -mindepth 2 -type f -exec mv -f {} "$out_dir/" \; 2>/dev/null || true
+            }
 
             run_lpunpack() {
               local img_file="$1"
@@ -163,13 +179,12 @@ jobs:
 
             download_universal_rom "$INPUT_URL"
 
-            # Tìm file ROM lớn nhất vừa tải về
             if [[ ! -f "$baserom" ]]; then
                 baserom=$(find "$work_dir" -maxdepth 2 -type f \( -iname "*.zip" -o -iname "*.tgz" -o -iname "*.tar.gz" -o -iname "*.bin" -o -iname "*.img" \) ! -name "magisk*" ! -name "twrp*" -printf "%s %p\n" 2>/dev/null | sort -nr | head -n 1 | cut -d" " -f2-)
             fi
 
             if [[ ! -f "$baserom" ]]; then
-                echo "[ERROR] Không tìm thấy file ROM sau khi tải! Kiểm tra lại link đầu vào hoặc quyền chia sẻ công khai của Google Drive."
+                echo "[ERROR] Không tìm thấy file ROM sau khi tải!"
                 exit 1
             fi
 
@@ -202,11 +217,10 @@ jobs:
                 payload-extract extract -o build/baserom/images/ "$baserom"
                 rm -f "$baserom"
             else
-                zip_list=$(7z l -slt "$baserom" | grep "^Path = " | sed "s/^Path = //")
+                zip_list=$(unzip -Z1 "$baserom" 2>/dev/null || 7z l -slt "$baserom" | grep "^Path = " | sed "s/^Path = //")
 
                 if echo "$zip_list" | grep -q "payload\.bin$"; then
-                    echo "[INFO] Extracting payload.bin..."
-                    7z e -y "$baserom" "payload.bin" -r -obuild/baserom
+                    extract_from_zip "$baserom" "payload.bin" "build/baserom"
                     rm -f "$baserom"
                     payload-extract extract -o build/baserom/images/ build/baserom/payload.bin
                     rm -f build/baserom/payload.bin
@@ -223,8 +237,7 @@ jobs:
                     done
 
                 elif echo "$zip_list" | grep -q "super\.img\.zst$"; then
-                    echo "[INFO] Extracting super.img.zst..."
-                    7z e -y "$baserom" "super.img.zst" -r -obuild/baserom
+                    extract_from_zip "$baserom" "super.img.zst" "build/baserom"
                     rm -f "$baserom"
                     zstd -d --rm build/baserom/super.img.zst -o build/baserom/super.img
                     if file build/baserom/super.img | grep -q "Android sparse image"; then
@@ -239,10 +252,10 @@ jobs:
                     done
 
                 elif echo "$zip_list" | grep -q "super\.img$"; then
-                    echo "[INFO] Extracting single super.img..."
-                    7z e -y "$baserom" "super.img" -r -obuild/baserom
+                    extract_from_zip "$baserom" "super.img" "build/baserom"
                     rm -f "$baserom"
                     ls -lh build/baserom/super.img
+                    file build/baserom/super.img
                     if file build/baserom/super.img | grep -q "Android sparse image"; then
                         echo "[INFO] Converting sparse super.img to raw..."
                         /usr/bin/simg2img build/baserom/super.img build/baserom/super_raw.img
@@ -257,7 +270,7 @@ jobs:
 
                 elif echo "$zip_list" | grep -q "super\.img\."; then
                     echo "[INFO] Extracting split super.img.*..."
-                    7z e -y "$baserom" "*super.img.*" -r -obuild/baserom
+                    unzip -o -j "$baserom" "*super.img.*" -d build/baserom || 7z e -y "$baserom" "*super.img.*" -r -obuild/baserom
                     rm -f "$baserom"
                     /usr/bin/simg2img build/baserom/*super.img.* build/baserom/super.img
                     rm -f build/baserom/*super.img.*
@@ -274,10 +287,9 @@ jobs:
                 fi
             fi
 
-            # Xóa các phân vùng thừa (odm, mi_ext, vendor...) không dùng để tiết kiệm chỗ trống trước khi bung system/product
             find "$work_dir/build/baserom/images" -maxdepth 1 -name "*.img" ! -name "system.img" ! -name "system_ext.img" ! -name "product.img" ! -name "vendor.img" -delete
 
-            # 3. Bung các phân vùng cần thiết và xóa ngay file .img sau khi bung xong
+            # 3. Bung các phân vùng cần thiết
             for part in system system_ext product vendor; do
                 if [ -f "$work_dir/build/baserom/images/${part}.img" ]; then
                     echo "[INFO] Unpacking ${part}.img..."
