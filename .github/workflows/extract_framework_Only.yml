@@ -93,77 +93,8 @@ jobs:
             export LD_LIBRARY_PATH="$work_dir/bin/$(uname)/$(uname -m)/lib:$work_dir/bin/$(uname)/$(uname -m)/:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
             source "$work_dir/functions.sh"
 
-            # Tạo bộ giải nén super.img độc lập (hỗ trợ Python 3.12+, bỏ qua lỗi invalid checksum của ROM port)
-            python3 -c "
-import base64
-code = '''
-import os, sys, struct
-
-LP_PARTITION_RESERVED_BYTES = 4096
-LP_METADATA_GEOMETRY_MAGIC = 0x616c4467
-LP_METADATA_HEADER_MAGIC = 0x414C5030
-LP_SECTOR_SIZE = 512
-
-def unpack_super(img_path, out_dir):
-    os.makedirs(out_dir, exist_ok=True)
-    with open(img_path, 'rb') as f:
-        f.seek(LP_PARTITION_RESERVED_BYTES)
-        geom = f.read(4096)
-        magic, struct_size, _, max_meta_size, max_meta_slots, logical_block_size = struct.unpack('<III32xIII', geom[:56])
-        if magic != LP_METADATA_GEOMETRY_MAGIC:
-            raise RuntimeError(f'Invalid geometry magic: {hex(magic)}')
-        
-        meta_offset = LP_PARTITION_RESERVED_BYTES + 4096 * 2
-        f.seek(meta_offset)
-        hdr = f.read(256)
-        h_magic, maj, min_v, h_size = struct.unpack('<IHHI', hdr[:12])
-        if h_magic != LP_METADATA_HEADER_MAGIC:
-            raise RuntimeError(f'Invalid metadata header magic: {hex(h_magic)}')
-        
-        tables_size = struct.unpack('<I', hdr[44:48])[0]
-        p_off, p_num, p_ent = struct.unpack('<III', hdr[80:92])
-        e_off, e_num, e_ent = struct.unpack('<III', hdr[92:104])
-        
-        f.seek(meta_offset + h_size)
-        tables = f.read(tables_size)
-        
-        extents = []
-        for i in range(e_num):
-            off = e_off + i * e_ent
-            num_sec, target_type, target_data, target_src = struct.unpack('<QIQI', tables[off:off+24])
-            extents.append((num_sec, target_type, target_data))
-            
-        for i in range(p_num):
-            off = p_off + i * p_ent
-            raw_name = tables[off:off+36]
-            name = raw_name.split(b'\x00', 1)[0].decode('utf-8', errors='ignore')
-            attrs, first_ext, num_ext, group_idx = struct.unpack('<IIII', tables[off+36:off+52])
-            if not name or num_ext == 0:
-                continue
-            out_file = os.path.join(out_dir, f'{name}.img')
-            print(f'[LPUNPACK] Extracting {name}.img ({num_ext} extents)...')
-            with open(out_file, 'wb') as out_f:
-                for e_idx in range(first_ext, first_ext + num_ext):
-                    num_sec, target_type, target_data = extents[e_idx]
-                    size_bytes = num_sec * LP_SECTOR_SIZE
-                    if target_type == 0:
-                        f.seek(target_data * LP_SECTOR_SIZE)
-                        rem = size_bytes
-                        while rem > 0:
-                            chunk = f.read(min(rem, 16 * 1024 * 1024))
-                            if not chunk:
-                                break
-                            out_f.write(chunk)
-                            rem -= len(chunk)
-                    else:
-                        out_f.seek(size_bytes - 1, 1)
-                        out_f.write(b'\x00')
-
-if __name__ == '__main__':
-    unpack_super(sys.argv[1], sys.argv[2])
-'''
-open('/tmp/fast_lpunpack.py', 'w').write(code)
-"
+            # Giải mã script fast_lpunpack.py từ Base64 (tránh tuyệt đối lỗi cú pháp YAML)
+            echo "aW1wb3J0IG9zLCBzeXMsIHN0cnVjdAoKTFBfUEFSVElUSU9OX1JFU0VSVkVEX0JZVEVTID0gNDA5NgpMUF9NRVRBREFUQV9HRU9NRVRSWV9NQUdJQyA9IDB4NjE2YzQ0NjcKTFBfTUVUQURBVEFfSEVBREVSX01BR0lDID0gMHg0MTRDNTAzMApMUF9TRUNUT1JfU0laRSA9IDUxMgoKZGVmIHVucGFja19zdXBlcihpbWdfcGF0aCwgb3V0X2Rpcik6CiAgICBvcy5tYWtlZGlycyhvdXRfZGlyLCBleGlzdF9vaz1UcnVlKQogICAgd2l0aCBvcGVuKGltZ19wYXRoLCAncmInKSBhcyBmOgogICAgICAgIGYuc2VlayhMUF9QQVJUSVRJT05fUkVTRVJWRURfQllURVMpCiAgICAgICAgZ2VvbSA9IGYucmVhZCg0MDk2KQogICAgICAgIG1hZ2ljLCBzdHJ1Y3Rfc2l6ZSwgXywgbWF4X21ldGFfc2l6ZSwgbWF4X21ldGFfc2xvdHMsIGxvZ2ljYWxfYmxvY2tfc2l6ZSA9IHN0cnVjdC51bnBhY2soJzxJSUkzMnhJSUknLCBnZW9tWzo1Nl0pCiAgICAgICAgaWYgbWFnaWMgIT0gTFBfTUVUQURBVEFfR0VPTUVUUllfTUFHSUM6CiAgICAgICAgICAgIHJhaXNlIFJ1bnRpbWVFcnJvcihmJ0ludmFsaWQgZ2VvbWV0cnkgbWFnaWM6IHtoZXgobWFnaWMpfScpCiAgICAgICAgbWV0YV9vZmZzZXQgPSBMUF9QQVJUSVRJT05fUkVTRVJWRURfQllURVMgKyA0MDk2ICogMgogICAgICAgIGYuc2VlayhtZXRhX29mZnNldCkKICAgICAgICBoZHIgPSBmLnJlYWQoMjU2KQogICAgICAgIGhfbWFnaWMsIG1haiwgbWluX3YsIGhfc2l6ZSA9IHN0cnVjdC51bnBhY2soJzxJSUhJJywgaGRyWzoxMl0pCiAgICAgICAgaWYgaF9tYWdpYyAhPSBMUF9NRVRBREFUQV9IRUFERVJfTUFHSUM6CiAgICAgICAgICAgIHJhaXNlIFJ1bnRpbWVFcnJvcihmJ0ludmFsaWQgbWV0YWRhdGEgaGVhZGVyIG1hZ2ljOiB7aGV4KGhfbWFnaWMpfScpCiAgICAgICAgdGFibGVzX3NpemUgPSBzdHJ1Y3QudW5wYWNrKCc8SScsIGhkcls0NDo0OF0pWzBdCiAgICAgICAgcF9vZmYsIHBfbnVtLCBwX2VudCA9IHN0cnVjdC51bnBhY2soJzxJSUknLCBoZHJbODA6OTJdKQogICAgICAgIGVfb2ZmLCBlX251bSwgZV9lbnQgPSBzdHJ1Y3QudW5wYWNrKCc8SUlJJywgaGRyWzkyOjEwNF0pCiAgICAgICAgZi5zZWVrKG1ldGFfb2Zmc2V0ICsgaF9zaXplKQogICAgICAgIHRhYmxlcyA9IGYucmVhZCh0YWJsZXNfc2l6ZSkKICAgICAgICBleHRlbnRzID0gW10KICAgICAgICBmb3IgaSBpbiByYW5nZShlX251bSk6CiAgICAgICAgICAgIG9mZiA9IGVfb2ZmICsgaSAqIGVfZW50CiAgICAgICAgICAgIG51bV9zZWMsIHRhcmdldF90eXBlLCB0YXJnZXRfZGF0YSwgdGFyZ2V0X3NyYyA9IHN0cnVjdC51bnBhY2soJzxRSVFJSScsIHRhYmxlc1tvZmY6b2ZmKzI0XSkKICAgICAgICAgICAgZXh0ZW50cy5hcHBlbmQoKG51bV9zZWMsIHRhcmdldF90eXBlLCB0YXJnZXRfZGF0YSkpCiAgICAgICAgZm9yIGkgaW4gcmFuZ2UocF9udW0pOgogICAgICAgICAgICBvZmYgPSBwX29mZiArIGkgKiBwX2VudAogICAgICAgICAgICByYXdfbmFtZSA9IHRhYmxlc1tvZmY6b2ZmKzM2XQogICAgICAgICAgICBuYW1lID0gcmF3X25hbWUuc3BsaXQoYidcXHgwMCcsIDEpWzBdLmRlY29kZSgndXRmLTgnLCBlcnJvcnM9J2lnbm9yZScpCiAgICAgICAgICAgIGF0dHJzLCBmaXJzdF9leHQsIG51bV9leHQsIGdyb3VwX2lkeCA9IHN0cnVjdC51bnBhY2soJzxJSUlJJywgdGFibGVzW29mZiszNjpvZmYrNTJdKQogICAgICAgICAgICBpZiBub3QgbmFtZSBvciBudW1fZXh0ID09IDA6CiAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICBvdXRfZmlsZSA9IG9zLnBhdGguam9pbihvdXRfZGlyLCBmJ3tuYW1lfS5pbWcnKQogICAgICAgICAgICBwcmludChmJ1tMUFVOUEFDS10gRXh0cmFjdGluZyB7bmFtZX0uaW1nICh7bnVtX2V4dH0gZXh0ZW50cykuLi4nKQogICAgICAgICAgICB3aXRoIG9wZW4ob3V0X2ZpbGUsICd3YicpIGFzIG91dF9mOgogICAgICAgICAgICAgICAgZm9yIGVfaWR4IGluIHJhbmdlKGZpcnN0X2V4dCwgZmlyc3RfZXh0ICsgbnVtX2V4dCk6CiAgICAgICAgICAgICAgICAgICAgbnVtX3NlYywgdGFyZ2V0X3R5cGUsIHRhcmdldF9kYXRhID0gZXh0ZW50c1tlX2lkeF0KICAgICAgICAgICAgICAgICAgICBzaXplX2J5dGVzID0gbnVtX3NlYyAqIExQX1NFQ1RPUl9TSVpFCiAgICAgICAgICAgICAgICAgICAgaWYgdGFyZ2V0X3R5cGUgPT0gMDoKICAgICAgICAgICAgICAgICAgICAgICAgZi5zZWVrKHRhcmdldF9kYXRhICogTFBfU0VDVE9SX1NJWkUpCiAgICAgICAgICAgICAgICAgICAgICAgIHJlbSA9IHNpemVfYnl0ZXMKICAgICAgICAgICAgICAgICAgICAgICAgd2hpbGUgcmVtID4gMDoKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGNodW5rID0gZi5yZWFkKG1pbihyZW0sIDE2ICogMTAyNCAqIDEwMjQpKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgaWYgbm90IGNodW5rOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIGJyZWFrCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBvdXRfZi53cml0ZShjaHVuaykKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHJlbSAtPSBsZW4oY2h1bmspCiAgICAgICAgICAgICAgICAgICAgZWxzZToKICAgICAgICAgICAgICAgICAgICAgICAgb3V0X2Yuc2VlayhzaXplX2J5dGVzIC0gMSwgMSkKICAgICAgICAgICAgICAgICAgICAgICAgb3V0X2Yud3JpdGUoYidcXHgwMCcpCgppZiBfX25hbWVfXyA9PSAnX19tYWluX18nOgogICAgdW5wYWNrX3N1cGVyKHN5cy5hcmd2WzFdLCBzeXMuYXJndlsyXSkK" | base64 -d > /tmp/fast_lpunpack.py
 
             extract_from_zip() {
               local zip_file="$1"
