@@ -93,18 +93,10 @@ jobs:
             export LD_LIBRARY_PATH="$work_dir/bin/$(uname)/$(uname -m)/lib:$work_dir/bin/$(uname)/$(uname -m)/:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
             source "$work_dir/functions.sh"
 
-            # Vá lpunpack.py: sửa lỗi slice trên Python 3.12+ VÀ bỏ qua lỗi invalid checksum của ROM port
+            # Vá lpunpack.py bằng sed 1 dòng (tránh lỗi cú pháp YAML)
             if [ -f "$work_dir/bin/lpunpack.py" ]; then
-              python3 -c "
-p = \"$work_dir/bin/lpunpack.py\"
-txt = open(p, encoding=\"utf-8\", errors=\"ignore\").read()
-txt = txt.replace(\"buffer[0:self.size]\", \"buffer[0:int(self.size)]\")
-txt = txt.replace(\"raise LpMetadataError(\x27Logical partition metadata has invalid checksum.\x27)\", \"pass\")
-txt = txt.replace(\"raise LpMetadataError(\\\"Logical partition metadata has invalid checksum.\\\")\", \"pass\")
-txt = txt.replace(\"raise LpMetadataError(\x27Logical partition geometry has invalid checksum.\x27)\", \"pass\")
-txt = txt.replace(\"raise LpMetadataError(\\\"Logical partition geometry has invalid checksum.\\\")\", \"pass\")
-open(p, \"w\", encoding=\"utf-8\").write(txt)
-"
+              sed -i "s/buffer\[0:self\.size\]/buffer[0:int(self.size)]/g" "$work_dir/bin/lpunpack.py" || true
+              sed -i "s/raise LpMetadataError(.*invalid checksum.*)/pass/g" "$work_dir/bin/lpunpack.py" || true
             fi
 
             extract_from_zip() {
@@ -155,7 +147,6 @@ open(p, \"w\", encoding=\"utf-8\").write(txt)
                 return 0
               fi
 
-              # Thử native lpunpack trước; nếu fail do checksum ROM port thì dùng lpunpack.py đã vá bypass checksum
               if [ -x "$work_dir/bin/Linux/x86_64/lpunpack" ] && "$work_dir/bin/Linux/x86_64/lpunpack" "$img_file" "$out_dir" 2>/dev/null; then
                 echo "[INFO] Unpacked with native lpunpack."
               else
