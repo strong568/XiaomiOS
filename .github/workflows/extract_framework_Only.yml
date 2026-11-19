@@ -160,249 +160,247 @@ jobs:
         env:
           INPUT_URL: ${{ inputs.input_url }}
         run: |
-          sudo bash -c '
-            set -e
-            INPUT_URL="$1"
-            GH_ENV="$2"
-            work_dir=$(pwd)
-            export PATH="/usr/local/bin:$HOME/.local/bin:$work_dir/bin/$(uname)/$(uname -m)/:$PATH"
-            export LD_LIBRARY_PATH="$work_dir/bin/$(uname)/$(uname -m)/lib:$work_dir/bin/$(uname)/$(uname -m)/:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
-            source "$work_dir/functions.sh"
+          sudo env INPUT_URL="$INPUT_URL" GH_ENV="$GITHUB_ENV" bash << 'EOF'
+          set -e
+          work_dir=$(pwd)
+          export PATH="/usr/local/bin:$HOME/.local/bin:$work_dir/bin/$(uname)/$(uname -m)/:$PATH"
+          export LD_LIBRARY_PATH="$work_dir/bin/$(uname)/$(uname -m)/lib:$work_dir/bin/$(uname)/$(uname -m)/:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
+          source "$work_dir/functions.sh"
 
-            extract_from_zip() {
-              local zip_file="$1"
-              local target_pattern="$2"
-              local out_dir="$3"
-              echo "[INFO] Extracting $target_pattern using bsdtar/unzip..."
-              if command -v bsdtar >/dev/null 2>&1; then
-                bsdtar -xvf "$zip_file" -C "$out_dir" --include="*${target_pattern}" || unzip -o -j "$zip_file" "*${target_pattern}" -d "$out_dir" || 7z e -y "$zip_file" "${target_pattern}" -r -o"$out_dir"
-              else
-                unzip -o -j "$zip_file" "*${target_pattern}" -d "$out_dir" || 7z e -y "$zip_file" "${target_pattern}" -r -o"$out_dir"
-              fi
-              find "$out_dir" -mindepth 2 -type f -exec mv -f {} "$out_dir/" \; 2>/dev/null || true
-            }
-
-            process_super_image() {
-              local img_file="$1"
-              local out_dir="$2"
-
-              local magic_hex=$(head -c 4 "$img_file" | od -An -tx1 | tr -d " \n")
-              if [[ "$magic_hex" == "28b52ffd" ]]; then
-                mv "$img_file" "${img_file}.zst"
-                zstd -d --rm "${img_file}.zst" -o "$img_file"
-              elif [[ "$magic_hex" == "04224d18" ]]; then
-                mv "$img_file" "${img_file}.lz4"
-                lz4 -d --rm "${img_file}.lz4" "$img_file"
-              elif [[ "$magic_hex" == "1f8b"* ]]; then
-                mv "$img_file" "${img_file}.gz"
-                gzip -d "$img_file.gz"
-              fi
-
-              magic_hex=$(head -c 4 "$img_file" | od -An -tx1 | tr -d " \n")
-              if [[ "$magic_hex" == "3aff26ed" ]] || file "$img_file" | grep -q "Android sparse image"; then
-                echo "[INFO] Converting sparse super.img to raw..."
-                /usr/bin/simg2img "$img_file" "${img_file}.raw"
-                rm -f "$img_file"
-                mv -f "${img_file}.raw" "$img_file"
-              fi
-
-              local lp_offset=$(python3 -c "import sys; data=open(sys.argv[1],\"rb\").read(16777216); offsets=[data.find(s) for s in (b\"gDla\",b\"alDg\") if data.find(s)!=-1]; print(min(offsets) if offsets else -1)" "$img_file")
-              if [ "$lp_offset" -gt 4096 ]; then
-                local skip_bytes=$((lp_offset - 4096))
-                dd if="$img_file" of="${img_file}.fixed" bs=4096 skip=$((skip_bytes / 4096)) status=none
-                rm -f "$img_file"
-                mv -f "${img_file}.fixed" "$img_file"
-              elif [ "$lp_offset" -eq -1 ]; then
-                mv -f "$img_file" "$out_dir/system.img"
-                return 0
-              fi
-
-              if [ -x "$work_dir/bin/Linux/x86_64/lpunpack" ] && "$work_dir/bin/Linux/x86_64/lpunpack" "$img_file" "$out_dir" 2>/dev/null; then
-                echo "[INFO] Unpacked with native lpunpack."
-              else
-                echo "[INFO] Native lpunpack rejected checksum, unpacking with fast_lpunpack.py..."
-                python3 /tmp/fast_lpunpack.py "$img_file" "$out_dir"
-              fi
-
-              rm -f "$img_file"
-              for i in "$out_dir"/*_a.img; do
-                [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
-              done
-            }
-
-            # 1. Bộ tải đa năng hỗ trợ mọi loại link
-            download_universal_rom() {
-              local url="$1"
-              echo "[INFO] Đang xử lý link tải: $url"
-
-              if [[ "$url" =~ drive\.(usercontent\.)?google\.com ]]; then
-                echo "[INFO] Nhận diện link Google Drive..."
-                if [[ "$url" =~ /folders/ ]]; then
-                  python3 -m gdown --folder "$url" -O "$work_dir/"
-                else
-                  if ! python3 -m gdown --fuzzy "$url" -O "$work_dir/"; then
-                    echo "[WARNING] gdown bị chặn/lỗi, chuyển sang phương thức bypass drive.usercontent..."
-                    local file_id=$(python3 -c "import re, sys; m=re.search(r'(?:id=|/d/)([a-zA-Z0-9_-]{20,})', sys.argv[1]); print(m.group(1) if m else '')" "$url")
-                    if [ -z "$file_id" ]; then
-                      echo "[ERROR] Không trích xuất được File ID từ link Google Drive!"
-                      exit 1
-                    fi
-                    local html_page=$(curl -sL -c /tmp/gd_cookies.txt -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" "https://drive.usercontent.google.com/download?id=${file_id}&export=download&confirm=t")
-                    local uuid_val=$(echo "$html_page" | grep -oE 'name="uuid" value="[^"]+"' | head -n 1 | cut -d'"' -f4)
-                    local dl_url="https://drive.usercontent.google.com/download?id=${file_id}&export=download&confirm=t"
-                    [ -n "$uuid_val" ] && dl_url="${dl_url}&uuid=${uuid_val}"
-                    aria2c -x 16 -s 16 -k 1M --load-cookies=/tmp/gd_cookies.txt -U "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --content-disposition "$dl_url" -d "$work_dir"
-                  fi
-                fi
-
-              elif [[ "$url" =~ pixeldrain\.com/(u|l)/([a-zA-Z0-9]+) ]]; then
-                local type="${BASH_REMATCH[1]}"
-                local id="${BASH_REMATCH[2]}"
-                echo "[INFO] Nhận diện link Pixeldrain ($id)..."
-                if [[ "$type" == "u" ]]; then
-                  aria2c -x 16 -s 16 -k 1M --content-disposition "https://pixeldrain.com/api/file/${id}?download" -d "$work_dir"
-                else
-                  aria2c -x 16 -s 16 -k 1M --content-disposition "https://pixeldrain.com/api/list/${id}/zip" -d "$work_dir"
-                fi
-
-              elif [[ "$url" =~ gofile\.io/d/([a-zA-Z0-9]+) ]]; then
-                local content_id="${BASH_REMATCH[1]}"
-                echo "[INFO] Nhận diện link Gofile ($content_id)..."
-                local token=$(curl -s -X POST "https://api.gofile.io/accounts" | jq -r ".data.token")
-                local dl_link=$(curl -s -H "Authorization: Bearer $token" "https://api.gofile.io/contents/${content_id}?wt=4fd6sg89d7s6" | jq -r ".data.children | to_entries[0].value.link")
-                aria2c -x 16 -s 16 -k 1M --header="Cookie: accountToken=$token" --content-disposition "$dl_link" -d "$work_dir"
-
-              elif [[ "$url" =~ mediafire\.com ]]; then
-                echo "[INFO] Nhận diện link MediaFire..."
-                local direct_mf=$(curl -sL "$url" | grep -oE "https://download[0-9]+\.mediafire\.com/[^\"]+" | head -n 1)
-                aria2c -x 16 -s 16 -k 1M --content-disposition "$direct_mf" -d "$work_dir"
-
-              elif [[ "$url" =~ sourceforge\.net ]]; then
-                echo "[INFO] Nhận diện link SourceForge..."
-                local sf_url="${url%/download}"
-                aria2c -x 16 -s 16 -k 1M --content-disposition -U "Mozilla/5.0" "$sf_url" -d "$work_dir"
-
-              else
-                if [ -f "$work_dir/bin/ddevice/getROM.sh" ]; then
-                  sed "/# ==================== NHẬN DIỆN OS ====================/,\$d" "$work_dir/bin/ddevice/getROM.sh" > /tmp/download_only.sh
-                  source /tmp/download_only.sh "$url" || aria2c -x 16 -s 16 -k 1M --content-disposition -U "Mozilla/5.0" "$url" -d "$work_dir"
-                else
-                  aria2c -x 16 -s 16 -k 1M --content-disposition -U "Mozilla/5.0" "$url" -d "$work_dir"
-                fi
-              fi
-            }
-
-            download_universal_rom "$INPUT_URL"
-
-            if [[ ! -f "$baserom" ]]; then
-                baserom=$(find "$work_dir" -maxdepth 2 -type f \( -iname "*.zip" -o -iname "*.tgz" -o -iname "*.tar.gz" -o -iname "*.bin" -o -iname "*.img" -o -iname "*.html" \) ! -name "magisk*" ! -name "twrp*" -printf "%s %p\n" 2>/dev/null | sort -nr | head -n 1 | cut -d" " -f2-)
-            fi
-
-            if [[ ! -f "$baserom" ]] || head -c 512 "$baserom" | grep -qiE "<!DOCTYPE html|<html"; then
-                echo "[ERROR] File tải về bị Google Drive chặn quota IP server (trả về trang HTML thay vì file ROM)."
-                echo "[GỢI Ý] Hãy mở link trên Google Drive -> chọn 'Tạo bản sao' (Make a copy) về Drive của bạn -> chia sẻ công khai link bản sao đó và chạy lại!"
-                exit 1
-            fi
-
-            echo "[INFO] File ROM đã tải: $baserom ($(du -h "$baserom" | cut -f1))"
-            echo "STOCK_BASEROM=$baserom" >> "$GH_ENV"
-
-            rm -rf build/baserom/
-            mkdir -p build/baserom/images/ "$work_dir/bin/ddevice"
-
-            # 2. Giải nén theo định dạng ROM
-            if [[ "$baserom" =~ \.(tgz|tar\.gz)$ ]]; then
-                echo "[INFO] Extracting Fastboot ROM (.tgz/.tar.gz)..."
-                tar -xzf "$baserom" -C build/baserom/
-                rm -f "$baserom"
-                super_img=$(find build/baserom/ -name "super.img" | head -n 1)
-                if [ -n "$super_img" ]; then
-                    process_super_image "$super_img" "build/baserom/images"
-                fi
-            elif [[ "$baserom" =~ \.bin$ ]]; then
-                echo "[INFO] Extracting direct payload.bin..."
-                payload-extract extract -o build/baserom/images/ "$baserom"
-                rm -f "$baserom"
+          extract_from_zip() {
+            local zip_file="$1"
+            local target_pattern="$2"
+            local out_dir="$3"
+            echo "[INFO] Extracting $target_pattern using bsdtar/unzip..."
+            if command -v bsdtar >/dev/null 2>&1; then
+              bsdtar -xvf "$zip_file" -C "$out_dir" --include="*${target_pattern}" || unzip -o -j "$zip_file" "*${target_pattern}" -d "$out_dir" || 7z e -y "$zip_file" "${target_pattern}" -r -o"$out_dir"
             else
-                zip_list=$(unzip -Z1 "$baserom" 2>/dev/null || 7z l -slt "$baserom" | grep "^Path = " | sed "s/^Path = //")
+              unzip -o -j "$zip_file" "*${target_pattern}" -d "$out_dir" || 7z e -y "$zip_file" "${target_pattern}" -r -o"$out_dir"
+            fi
+            find "$out_dir" -mindepth 2 -type f -exec mv -f {} "$out_dir/" \; 2>/dev/null || true
+          }
 
-                if echo "$zip_list" | grep -q "payload\.bin$"; then
-                    extract_from_zip "$baserom" "payload.bin" "build/baserom"
-                    rm -f "$baserom"
-                    payload-extract extract -o build/baserom/images/ build/baserom/payload.bin
-                    rm -f build/baserom/payload.bin
+          process_super_image() {
+            local img_file="$1"
+            local out_dir="$2"
 
-                elif echo "$zip_list" | grep -q "\.br$"; then
-                    echo "[INFO] Extracting new.dat.br..."
-                    7z x -y "$baserom" -obuild/baserom >/dev/null
-                    rm -f "$baserom"
-                    super_list=$(grep "add " build/baserom/dynamic_partitions_op_list | awk "{ print \$2 }")
-                    for part in ${super_list}; do
-                        brotli -d "build/baserom/$part.new.dat.br"
-                        python3 "$work_dir/bin/Linux/x86_64/sdat2img.py" "build/baserom/$part.transfer.list" "build/baserom/$part.new.dat" "build/baserom/images/$part.img"
-                        rm -f "build/baserom/$part.new.dat"
-                    done
-
-                elif echo "$zip_list" | grep -q "super\.img\.zst$"; then
-                    extract_from_zip "$baserom" "super.img.zst" "build/baserom"
-                    rm -f "$baserom"
-                    zstd -d --rm build/baserom/super.img.zst -o build/baserom/super.img
-                    process_super_image "build/baserom/super.img" "build/baserom/images"
-
-                elif echo "$zip_list" | grep -q "super\.img$"; then
-                    extract_from_zip "$baserom" "super.img" "build/baserom"
-                    rm -f "$baserom"
-                    process_super_image "build/baserom/super.img" "build/baserom/images"
-
-                elif echo "$zip_list" | grep -q "super\.img\."; then
-                    echo "[INFO] Extracting split super.img.*..."
-                    unzip -o -j "$baserom" "*super.img.*" -d build/baserom || 7z e -y "$baserom" "*super.img.*" -r -obuild/baserom
-                    rm -f "$baserom"
-                    /usr/bin/simg2img build/baserom/*super.img.* build/baserom/super.img
-                    rm -f build/baserom/*super.img.*
-                    process_super_image "build/baserom/super.img" "build/baserom/images"
-
-                else
-                    echo "[ERROR] Định dạng ROM không hỗ trợ! Danh sách file trong gói:"
-                    echo "$zip_list" | head -n 20
-                    exit 1
-                fi
+            local magic_hex=$(head -c 4 "$img_file" | od -An -tx1 | tr -d " \n")
+            if [[ "$magic_hex" == "28b52ffd" ]]; then
+              mv "$img_file" "${img_file}.zst"
+              zstd -d --rm "${img_file}.zst" -o "$img_file"
+            elif [[ "$magic_hex" == "04224d18" ]]; then
+              mv "$img_file" "${img_file}.lz4"
+              lz4 -d --rm "${img_file}.lz4" "$img_file"
+            elif [[ "$magic_hex" == "1f8b"* ]]; then
+              mv "$img_file" "${img_file}.gz"
+              gzip -d "$img_file.gz"
             fi
 
-            find "$work_dir/build/baserom/images" -maxdepth 1 -name "*.img" ! -name "system.img" ! -name "system_ext.img" ! -name "product.img" ! -name "vendor.img" -delete
+            magic_hex=$(head -c 4 "$img_file" | od -An -tx1 | tr -d " \n")
+            if [[ "$magic_hex" == "3aff26ed" ]] || file "$img_file" | grep -q "Android sparse image"; then
+              echo "[INFO] Converting sparse super.img to raw..."
+              /usr/bin/simg2img "$img_file" "${img_file}.raw"
+              rm -f "$img_file"
+              mv -f "${img_file}.raw" "$img_file"
+            fi
 
-            # 3. Bung các phân vùng cần thiết (giữ hardlink .bak để chống bị extract_partition xóa mất khi lỗi)
-            for part in system system_ext product vendor; do
-                img_path="$work_dir/build/baserom/images/${part}.img"
-                bak_path="${img_path}.bak"
-                if [ -f "$img_path" ]; then
-                    echo "[INFO] Unpacking ${part}.img ($(du -h "$img_path" | cut -f1))..."
-                    ln -f "$img_path" "$bak_path"
-                    if ! ( extract_partition "$img_path" "$work_dir/build/baserom/images" ); then
-                        echo "[WARNING] extract_partition failed for ${part}.img, restoring backup and trying fallback..."
-                        mv -f "$bak_path" "$img_path"
-                        file "$img_path" || true
-                        rm -rf "$work_dir/build/baserom/images/${part}"
-                        mkdir -p /mnt/rom_part
-                        umount /mnt/rom_part 2>/dev/null || true
-                        modprobe erofs 2>/dev/null || true
-                        modprobe f2fs 2>/dev/null || true
-                        if command -v fsck.erofs >/dev/null 2>&1 && fsck.erofs --extract="$work_dir/build/baserom/images/${part}" "$img_path" 2>/dev/null; then
-                            echo "[INFO] Fallback fsck.erofs extracted ${part}.img successfully."
-                        elif mount -o loop,ro "$img_path" /mnt/rom_part 2>/dev/null; then
-                            mkdir -p "$work_dir/build/baserom/images/${part}"
-                            cp -rf /mnt/rom_part/. "$work_dir/build/baserom/images/${part}/" || true
-                            umount /mnt/rom_part
-                            echo "[INFO] Fallback loop-mount extracted ${part}.img successfully."
-                        else
-                            mkdir -p "$work_dir/build/baserom/images/${part}"
-                            7z x -y "$img_path" -o"$work_dir/build/baserom/images/${part}"
-                        fi
-                    fi
-                    rm -f "$img_path" "$bak_path"
-                fi
+            local lp_offset=$(python3 -c 'import sys; data=open(sys.argv[1],"rb").read(16777216); offsets=[data.find(s) for s in (b"gDla",b"alDg") if data.find(s)!=-1]; print(min(offsets) if offsets else -1)' "$img_file")
+            if [ "$lp_offset" -gt 4096 ]; then
+              local skip_bytes=$((lp_offset - 4096))
+              dd if="$img_file" of="${img_file}.fixed" bs=4096 skip=$((skip_bytes / 4096)) status=none
+              rm -f "$img_file"
+              mv -f "${img_file}.fixed" "$img_file"
+            elif [ "$lp_offset" -eq -1 ]; then
+              mv -f "$img_file" "$out_dir/system.img"
+              return 0
+            fi
+
+            if [ -x "$work_dir/bin/Linux/x86_64/lpunpack" ] && "$work_dir/bin/Linux/x86_64/lpunpack" "$img_file" "$out_dir" 2>/dev/null; then
+              echo "[INFO] Unpacked with native lpunpack."
+            else
+              echo "[INFO] Native lpunpack rejected checksum, unpacking with fast_lpunpack.py..."
+              python3 /tmp/fast_lpunpack.py "$img_file" "$out_dir"
+            fi
+
+            rm -f "$img_file"
+            for i in "$out_dir"/*_a.img; do
+              [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
             done
-          ' _ "$INPUT_URL" "$GITHUB_ENV"
+          }
+
+          # 1. Bộ tải đa năng hỗ trợ mọi loại link
+          download_universal_rom() {
+            local url="$1"
+            echo "[INFO] Đang xử lý link tải: $url"
+
+            if [[ "$url" =~ drive\.(usercontent\.)?google\.com ]]; then
+              echo "[INFO] Nhận diện link Google Drive..."
+              if [[ "$url" =~ /folders/ ]]; then
+                python3 -m gdown --folder "$url" -O "$work_dir/"
+              else
+                if ! python3 -m gdown --fuzzy "$url" -O "$work_dir/"; then
+                  echo "[WARNING] gdown bị chặn/lỗi, chuyển sang phương thức bypass drive.usercontent..."
+                  local file_id=$(python3 -c 'import re, sys; m=re.search(r"(?:id=|/d/)([a-zA-Z0-9_-]{20,})", sys.argv[1]); print(m.group(1) if m else "")' "$url")
+                  if [ -z "$file_id" ]; then
+                    echo "[ERROR] Không trích xuất được File ID từ link Google Drive!"
+                    exit 1
+                  fi
+                  local html_page=$(curl -sL -c /tmp/gd_cookies.txt -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" "https://drive.usercontent.google.com/download?id=${file_id}&export=download&confirm=t")
+                  local uuid_val=$(echo "$html_page" | grep -oE 'name="uuid" value="[^"]+"' | head -n 1 | cut -d'"' -f4)
+                  local dl_url="https://drive.usercontent.google.com/download?id=${file_id}&export=download&confirm=t"
+                  [ -n "$uuid_val" ] && dl_url="${dl_url}&uuid=${uuid_val}"
+                  aria2c -x 16 -s 16 -k 1M --load-cookies=/tmp/gd_cookies.txt -U "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --content-disposition "$dl_url" -d "$work_dir"
+                fi
+              fi
+
+            elif [[ "$url" =~ pixeldrain\.com/(u|l)/([a-zA-Z0-9]+) ]]; then
+              local type="${BASH_REMATCH[1]}"
+              local id="${BASH_REMATCH[2]}"
+              echo "[INFO] Nhận diện link Pixeldrain ($id)..."
+              if [[ "$type" == "u" ]]; then
+                aria2c -x 16 -s 16 -k 1M --content-disposition "https://pixeldrain.com/api/file/${id}?download" -d "$work_dir"
+              else
+                aria2c -x 16 -s 16 -k 1M --content-disposition "https://pixeldrain.com/api/list/${id}/zip" -d "$work_dir"
+              fi
+
+            elif [[ "$url" =~ gofile\.io/d/([a-zA-Z0-9]+) ]]; then
+              local content_id="${BASH_REMATCH[1]}"
+              echo "[INFO] Nhận diện link Gofile ($content_id)..."
+              local token=$(curl -s -X POST "https://api.gofile.io/accounts" | jq -r ".data.token")
+              local dl_link=$(curl -s -H "Authorization: Bearer $token" "https://api.gofile.io/contents/${content_id}?wt=4fd6sg89d7s6" | jq -r ".data.children | to_entries[0].value.link")
+              aria2c -x 16 -s 16 -k 1M --header="Cookie: accountToken=$token" --content-disposition "$dl_link" -d "$work_dir"
+
+            elif [[ "$url" =~ mediafire\.com ]]; then
+              echo "[INFO] Nhận diện link MediaFire..."
+              local direct_mf=$(curl -sL "$url" | grep -oE "https://download[0-9]+\.mediafire\.com/[^\"]+" | head -n 1)
+              aria2c -x 16 -s 16 -k 1M --content-disposition "$direct_mf" -d "$work_dir"
+
+            elif [[ "$url" =~ sourceforge\.net ]]; then
+              echo "[INFO] Nhận diện link SourceForge..."
+              local sf_url="${url%/download}"
+              aria2c -x 16 -s 16 -k 1M --content-disposition -U "Mozilla/5.0" "$sf_url" -d "$work_dir"
+
+            else
+              if [ -f "$work_dir/bin/ddevice/getROM.sh" ]; then
+                sed "/# ==================== NHẬN DIỆN OS ====================/,\$d" "$work_dir/bin/ddevice/getROM.sh" > /tmp/download_only.sh
+                source /tmp/download_only.sh "$url" || aria2c -x 16 -s 16 -k 1M --content-disposition -U "Mozilla/5.0" "$url" -d "$work_dir"
+              else
+                aria2c -x 16 -s 16 -k 1M --content-disposition -U "Mozilla/5.0" "$url" -d "$work_dir"
+              fi
+            fi
+          }
+
+          download_universal_rom "$INPUT_URL"
+
+          if [[ ! -f "$baserom" ]]; then
+              baserom=$(find "$work_dir" -maxdepth 2 -type f \( -iname "*.zip" -o -iname "*.tgz" -o -iname "*.tar.gz" -o -iname "*.bin" -o -iname "*.img" -o -iname "*.html" \) ! -name "magisk*" ! -name "twrp*" -printf "%s %p\n" 2>/dev/null | sort -nr | head -n 1 | cut -d" " -f2-)
+          fi
+
+          if [[ ! -f "$baserom" ]] || head -c 512 "$baserom" | grep -qiE "<!DOCTYPE html|<html"; then
+              echo "[ERROR] File tải về bị Google Drive chặn quota IP server (trả về trang HTML thay vì file ROM)."
+              echo "[GỢI Ý] Hãy mở link trên Google Drive -> chọn 'Tạo bản sao' (Make a copy) về Drive của bạn -> chia sẻ công khai link bản sao đó và chạy lại!"
+              exit 1
+          fi
+
+          echo "[INFO] File ROM đã tải: $baserom ($(du -h "$baserom" | cut -f1))"
+          echo "STOCK_BASEROM=$baserom" >> "$GH_ENV"
+
+          rm -rf build/baserom/
+          mkdir -p build/baserom/images/ "$work_dir/bin/ddevice"
+
+          # 2. Giải nén theo định dạng ROM
+          if [[ "$baserom" =~ \.(tgz|tar\.gz)$ ]]; then
+              echo "[INFO] Extracting Fastboot ROM (.tgz/.tar.gz)..."
+              tar -xzf "$baserom" -C build/baserom/
+              rm -f "$baserom"
+              super_img=$(find build/baserom/ -name "super.img" | head -n 1)
+              if [ -n "$super_img" ]; then
+                  process_super_image "$super_img" "build/baserom/images"
+              fi
+          elif [[ "$baserom" =~ \.bin$ ]]; then
+              echo "[INFO] Extracting direct payload.bin..."
+              payload-extract extract -o build/baserom/images/ "$baserom"
+              rm -f "$baserom"
+          else
+              zip_list=$(unzip -Z1 "$baserom" 2>/dev/null || 7z l -slt "$baserom" | grep "^Path = " | sed "s/^Path = //")
+
+              if echo "$zip_list" | grep -q "payload\.bin$"; then
+                  extract_from_zip "$baserom" "payload.bin" "build/baserom"
+                  rm -f "$baserom"
+                  payload-extract extract -o build/baserom/images/ build/baserom/payload.bin
+                  rm -f build/baserom/payload.bin
+
+              elif echo "$zip_list" | grep -q "\.br$"; then
+                  echo "[INFO] Extracting new.dat.br..."
+                  7z x -y "$baserom" -obuild/baserom >/dev/null
+                  rm -f "$baserom"
+                  super_list=$(grep "add " build/baserom/dynamic_partitions_op_list | awk "{ print \$2 }")
+                  for part in ${super_list}; do
+                      brotli -d "build/baserom/$part.new.dat.br"
+                      python3 "$work_dir/bin/Linux/x86_64/sdat2img.py" "build/baserom/$part.transfer.list" "build/baserom/$part.new.dat" "build/baserom/images/$part.img"
+                      rm -f "build/baserom/$part.new.dat"
+                  done
+
+              elif echo "$zip_list" | grep -q "super\.img\.zst$"; then
+                  extract_from_zip "$baserom" "super.img.zst" "build/baserom"
+                  rm -f "$baserom"
+                  zstd -d --rm build/baserom/super.img.zst -o build/baserom/super.img
+                  process_super_image "build/baserom/super.img" "build/baserom/images"
+
+              elif echo "$zip_list" | grep -q "super\.img$"; then
+                  extract_from_zip "$baserom" "super.img" "build/baserom"
+                  rm -f "$baserom"
+                  process_super_image "build/baserom/super.img" "build/baserom/images"
+
+              elif echo "$zip_list" | grep -q "super\.img\."; then
+                  echo "[INFO] Extracting split super.img.*..."
+                  unzip -o -j "$baserom" "*super.img.*" -d build/baserom || 7z e -y "$baserom" "*super.img.*" -r -obuild/baserom
+                  rm -f "$baserom"
+                  /usr/bin/simg2img build/baserom/*super.img.* build/baserom/super.img
+                  rm -f build/baserom/*super.img.*
+                  process_super_image "build/baserom/super.img" "build/baserom/images"
+
+              else
+                  echo "[ERROR] Định dạng ROM không hỗ trợ! Danh sách file trong gói:"
+                  echo "$zip_list" | head -n 20
+                  exit 1
+              fi
+          fi
+
+          find "$work_dir/build/baserom/images" -maxdepth 1 -name "*.img" ! -name "system.img" ! -name "system_ext.img" ! -name "product.img" ! -name "vendor.img" -delete
+
+          # 3. Bung các phân vùng cần thiết (giữ hardlink .bak để chống bị extract_partition xóa mất khi lỗi)
+          for part in system system_ext product vendor; do
+              img_path="$work_dir/build/baserom/images/${part}.img"
+              bak_path="${img_path}.bak"
+              if [ -f "$img_path" ]; then
+                  echo "[INFO] Unpacking ${part}.img ($(du -h "$img_path" | cut -f1))..."
+                  ln -f "$img_path" "$bak_path"
+                  if ! ( extract_partition "$img_path" "$work_dir/build/baserom/images" ); then
+                      echo "[WARNING] extract_partition failed for ${part}.img, restoring backup and trying fallback..."
+                      mv -f "$bak_path" "$img_path"
+                      file "$img_path" || true
+                      rm -rf "$work_dir/build/baserom/images/${part}"
+                      mkdir -p /mnt/rom_part
+                      umount /mnt/rom_part 2>/dev/null || true
+                      modprobe erofs 2>/dev/null || true
+                      modprobe f2fs 2>/dev/null || true
+                      if command -v fsck.erofs >/dev/null 2>&1 && fsck.erofs --extract="$work_dir/build/baserom/images/${part}" "$img_path" 2>/dev/null; then
+                          echo "[INFO] Fallback fsck.erofs extracted ${part}.img successfully."
+                      elif mount -o loop,ro "$img_path" /mnt/rom_part 2>/dev/null; then
+                          mkdir -p "$work_dir/build/baserom/images/${part}"
+                          cp -rf /mnt/rom_part/. "$work_dir/build/baserom/images/${part}/" || true
+                          umount /mnt/rom_part
+                          echo "[INFO] Fallback loop-mount extracted ${part}.img successfully."
+                      else
+                          mkdir -p "$work_dir/build/baserom/images/${part}"
+                          7z x -y "$img_path" -o"$work_dir/build/baserom/images/${part}"
+                      fi
+                  fi
+                  rm -f "$img_path" "$bak_path"
+              fi
+          done
+          EOF
 
       - name: Extract Framework
         run: |
@@ -421,44 +419,44 @@ jobs:
             INC_OVERLAY="$INC_OVERLAY" \
             INC_ETC="$INC_ETC" \
             DUMP_STOCK_PATH="${{ env.DUMP_STOCK_PATH }}" \
-            bash -c '
-              work_dir=$(pwd)
-              base_img_dir="$work_dir/build/baserom/images"
-              tmp_dir="/tmp/add_optional_items"
-              rm -rf "$tmp_dir"
-              mkdir -p "$tmp_dir"
-              has_added=false
+            bash << 'EOF'
+          work_dir=$(pwd)
+          base_img_dir="$work_dir/build/baserom/images"
+          tmp_dir="/tmp/add_optional_items"
+          rm -rf "$tmp_dir"
+          mkdir -p "$tmp_dir"
+          has_added=false
 
-              copy_item() {
-                local rel_path="$1"
-                local part_prefix="${rel_path%%/*}"
-                local src_item="$base_img_dir/$rel_path"
+          copy_item() {
+            local rel_path="$1"
+            local part_prefix="${rel_path%%/*}"
+            local src_item="$base_img_dir/$rel_path"
 
-                if [ ! -e "$src_item" ] && [ -e "$base_img_dir/$part_prefix/$rel_path" ]; then
-                  src_item="$base_img_dir/$part_prefix/$rel_path"
-                fi
+            if [ ! -e "$src_item" ] && [ -e "$base_img_dir/$part_prefix/$rel_path" ]; then
+              src_item="$base_img_dir/$part_prefix/$rel_path"
+            fi
 
-                if [ -e "$src_item" ]; then
-                  mkdir -p "$tmp_dir/$(dirname "$rel_path")"
-                  cp -rf "$src_item" "$tmp_dir/$rel_path"
-                  echo "[FOUND] Đã thêm $rel_path vào gói Framework"
-                  has_added=true
-                else
-                  echo "[WARNING] Không tìm thấy đường dẫn: $rel_path"
-                fi
-              }
+            if [ -e "$src_item" ]; then
+              mkdir -p "$tmp_dir/$(dirname "$rel_path")"
+              cp -rf "$src_item" "$tmp_dir/$rel_path"
+              echo "[FOUND] Đã thêm $rel_path vào gói Framework"
+              has_added=true
+            else
+              echo "[WARNING] Không tìm thấy đường dẫn: $rel_path"
+            fi
+          }
 
-              [ "$INC_SETTINGS" == "true" ] && copy_item "system_ext/priv-app/Settings/Settings.apk"
-              [ "$INC_OVERLAY" == "true" ] && copy_item "product/overlay"
-              [ "$INC_ETC" == "true" ] && copy_item "product/etc"
+          [ "$INC_SETTINGS" == "true" ] && copy_item "system_ext/priv-app/Settings/Settings.apk"
+          [ "$INC_OVERLAY" == "true" ] && copy_item "product/overlay"
+          [ "$INC_ETC" == "true" ] && copy_item "product/etc"
 
-              if [ "$has_added" == "true" ]; then
-                pushd "$tmp_dir" > /dev/null
-                zip -ur "$DUMP_STOCK_PATH" ./*
-                popd > /dev/null
-              fi
-              rm -rf "$tmp_dir"
-            '
+          if [ "$has_added" == "true" ]; then
+            pushd "$tmp_dir" > /dev/null
+            zip -ur "$DUMP_STOCK_PATH" ./*
+            popd > /dev/null
+          fi
+          rm -rf "$tmp_dir"
+          EOF
 
       - name: Upload Framework to Artifacts
         uses: actions/upload-artifact@v4
