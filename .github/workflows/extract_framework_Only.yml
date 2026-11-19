@@ -74,7 +74,7 @@ jobs:
           sudo dpkg --configure -a || true
           sudo bash setup.sh
           sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends xmlstarlet aapt zipalign p7zip-full libarchive-tools erofs-utils libc++1 libc++abi1 unzip aria2 zstd lz4 brotli file android-sdk-libsparse-utils curl jq python3-pip
+          sudo apt-get install -y --no-install-recommends xmlstarlet aapt zipalign p7zip-full libarchive-tools erofs-utils f2fs-tools libc++1 libc++abi1 unzip aria2 zstd lz4 brotli file android-sdk-libsparse-utils curl jq python3-pip
           sudo pip3 install --break-system-packages --no-cache-dir -q gdown || sudo pip3 install --no-cache-dir -q gdown
           sudo ln -sf /usr/lib/x86_64-linux-gnu/libc++.so.1 /usr/lib/x86_64-linux-gnu/libc++.so 2>/dev/null || true
           sudo ldconfig
@@ -358,29 +358,35 @@ jobs:
 
             find "$work_dir/build/baserom/images" -maxdepth 1 -name "*.img" ! -name "system.img" ! -name "system_ext.img" ! -name "product.img" ! -name "vendor.img" -delete
 
-            # 3. Bung các phân vùng cần thiết (kèm fallback mount/fsck.erofs nếu extract_partition lỗi)
+            # 3. Bung các phân vùng cần thiết (giữ hardlink .bak để chống bị extract_partition xóa mất khi lỗi)
             for part in system system_ext product vendor; do
                 img_path="$work_dir/build/baserom/images/${part}.img"
+                bak_path="${img_path}.bak"
                 if [ -f "$img_path" ]; then
                     echo "[INFO] Unpacking ${part}.img ($(du -h "$img_path" | cut -f1))..."
+                    ln -f "$img_path" "$bak_path"
                     if ! ( extract_partition "$img_path" "$work_dir/build/baserom/images" ); then
-                        echo "[WARNING] extract_partition failed for ${part}.img, trying fallback mount/fsck.erofs..."
+                        echo "[WARNING] extract_partition failed for ${part}.img, restoring backup and trying fallback..."
+                        mv -f "$bak_path" "$img_path"
                         file "$img_path" || true
                         rm -rf "$work_dir/build/baserom/images/${part}"
-                        mkdir -p "$work_dir/build/baserom/images/${part}" /mnt/rom_part
+                        mkdir -p /mnt/rom_part
+                        umount /mnt/rom_part 2>/dev/null || true
                         modprobe erofs 2>/dev/null || true
                         modprobe f2fs 2>/dev/null || true
-                        if mount -o loop,ro "$img_path" /mnt/rom_part 2>/dev/null; then
+                        if command -v fsck.erofs >/dev/null 2>&1 && fsck.erofs --extract="$work_dir/build/baserom/images/${part}" "$img_path" 2>/dev/null; then
+                            echo "[INFO] Fallback fsck.erofs extracted ${part}.img successfully."
+                        elif mount -o loop,ro "$img_path" /mnt/rom_part 2>/dev/null; then
+                            mkdir -p "$work_dir/build/baserom/images/${part}"
                             cp -rf /mnt/rom_part/. "$work_dir/build/baserom/images/${part}/" || true
                             umount /mnt/rom_part
                             echo "[INFO] Fallback loop-mount extracted ${part}.img successfully."
-                        elif command -v fsck.erofs >/dev/null 2>&1 && fsck.erofs --extract="$work_dir/build/baserom/images/${part}" "$img_path"; then
-                            echo "[INFO] Fallback fsck.erofs extracted ${part}.img successfully."
                         else
+                            mkdir -p "$work_dir/build/baserom/images/${part}"
                             7z x -y "$img_path" -o"$work_dir/build/baserom/images/${part}"
                         fi
                     fi
-                    rm -f "$img_path"
+                    rm -f "$img_path" "$bak_path"
                 fi
             done
           ' _ "$INPUT_URL" "$GITHUB_ENV"
