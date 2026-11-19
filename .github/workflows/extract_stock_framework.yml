@@ -61,8 +61,10 @@ jobs:
         env:
           INPUT_URL: ${{ inputs.input_url }}
         run: |
-          sudo -E bash -c '
+          sudo bash -c '
             set -e
+            INPUT_URL="$1"
+            GH_ENV="$2"
             work_dir=$(pwd)
             export PATH="$work_dir/bin/$(uname)/$(uname -m)/:$PATH"
             export LD_LIBRARY_PATH="$work_dir/bin/$(uname)/$(uname -m)/lib:$work_dir/bin/$(uname)/$(uname -m)/:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
@@ -76,7 +78,7 @@ jobs:
             if [[ ! -f "$baserom" ]]; then
                 baserom=$(ls -S "$work_dir"/*.zip 2>/dev/null | head -n 1)
             fi
-            echo "STOCK_BASEROM=$baserom" >> "$GITHUB_ENV"
+            echo "STOCK_BASEROM=$baserom" >> "$GH_ENV"
 
             rm -rf build/baserom/
             mkdir -p build/baserom/images/ "$work_dir/bin/ddevice"
@@ -183,17 +185,19 @@ jobs:
                     extract_partition "$work_dir/build/baserom/images/${part}.img" "$work_dir/build/baserom/images"
                 fi
             done
-          '
+          ' _ "$INPUT_URL" "$GITHUB_ENV"
 
       - name: Extract Stock Framework
         run: |
           sudo chmod +x frameworkExtract.sh
-          sudo -E bash frameworkExtract.sh stock "${{ env.STOCK_BASEROM }}"
+          sudo env GITHUB_ENV="$GITHUB_ENV" GITHUB_OUTPUT="$GITHUB_OUTPUT" bash frameworkExtract.sh stock "${{ env.STOCK_BASEROM }}"
 
       - name: Append Settings.apk (Optional)
         if: ${{ inputs.include_settings }}
         run: |
-          sudo -E bash -c '
+          sudo bash -c '
+            DUMP_STOCK_PATH="$1"
+            DUMP_STOCK_NAME="$2"
             work_dir=$(pwd)
             base_img_dir="$work_dir/build/baserom/images"
             rel_path="system_ext/priv-app/Settings/Settings.apk"
@@ -217,7 +221,7 @@ jobs:
             else
                 echo "[WARNING] Không tìm thấy file: $src_file"
             fi
-          '
+          ' _ "${{ env.DUMP_STOCK_PATH }}" "${{ env.DUMP_STOCK_NAME }}"
 
       - name: Upload Stock Framework to Artifacts
         uses: actions/upload-artifact@v4
@@ -251,3 +255,4 @@ jobs:
             ${{ env.DUMP_STOCK_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
