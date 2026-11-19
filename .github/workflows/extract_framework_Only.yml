@@ -74,7 +74,7 @@ jobs:
           sudo dpkg --configure -a || true
           sudo bash setup.sh
           sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends xmlstarlet aapt zipalign p7zip-full libarchive-tools libc++1 libc++abi1 unzip aria2 zstd brotli file android-sdk-libsparse-utils curl jq python3-pip
+          sudo apt-get install -y --no-install-recommends xmlstarlet aapt zipalign p7zip-full libarchive-tools libc++1 libc++abi1 unzip aria2 zstd lz4 brotli file android-sdk-libsparse-utils curl jq python3-pip
           sudo pip3 install --break-system-packages --no-cache-dir -q gdown || sudo pip3 install --no-cache-dir -q gdown
           sudo ln -sf /usr/lib/x86_64-linux-gnu/libc++.so.1 /usr/lib/x86_64-linux-gnu/libc++.so 2>/dev/null || true
           sudo ldconfig
@@ -97,7 +97,6 @@ jobs:
               sed -i "s/buffer\[0:self\.size\]/buffer[0:int(self.size)]/g" "$work_dir/bin/lpunpack.py" || true
             fi
 
-            # Hàm giải nén file đơn trong Zip64 an toàn (tránh lỗi Headers Error của p7zip với file > 4GB)
             extract_from_zip() {
               local zip_file="$1"
               local target_pattern="$2"
@@ -108,23 +107,81 @@ jobs:
               else
                 unzip -o -j "$zip_file" "*${target_pattern}" -d "$out_dir" || 7z e -y "$zip_file" "${target_pattern}" -r -o"$out_dir"
               fi
-              # Nếu bsdtar giữ cấu trúc thư mục con, đưa file ra ngoài root của out_dir
               find "$out_dir" -mindepth 2 -type f -exec mv -f {} "$out_dir/" \; 2>/dev/null || true
             }
 
-            run_lpunpack() {
+            # Xử lý thông minh mọi biến thể của super.img (nén ẩn, sparse, lệch offset header, hoặc single partition)
+            process_super_image() {
               local img_file="$1"
               local out_dir="$2"
+
+              # 1. Kiểm tra xem super.img có bị nén ẩn (zstd / lz4 / gzip) không
+              local magic_hex=$(head -c 4 "$img_file" | od -An -tx1 | tr -d " \n")
+              echo "[DEBUG] super.img first 4 bytes magic: $magic_hex"
+
+              if [[ "$magic_hex" == "28b52ffd" ]]; then
+                echo "[INFO] Detected hidden ZSTD compression in super.img, decompressing..."
+                mv "$img_file" "${img_file}.zst"
+                zstd -d --rm "${img_file}.zst" -o "$img_file"
+              elif [[ "$magic_hex" == "04224d18" ]]; then
+                echo "[INFO] Detected hidden LZ4 compression in super.img, decompressing..."
+                mv "$img_file" "${img_file}.lz4"
+                lz4 -d --rm "${img_file}.lz4" "$img_file"
+              elif [[ "$magic_hex" == "1f8b"* ]]; then
+                echo "[INFO] Detected hidden GZIP compression in super.img, decompressing..."
+                mv "$img_file" "${img_file}.gz"
+                gzip -d "$img_file.gz"
+              fi
+
+              # 2. Kiểm tra Android Sparse Image (magic: 3aff26ed)
+              magic_hex=$(head -c 4 "$img_file" | od -An -tx1 | tr -d " \n")
+              if [[ "$magic_hex" == "3aff26ed" ]] || file "$img_file" | grep -q "Android sparse image"; then
+                echo "[INFO] Converting sparse super.img to raw..."
+                /usr/bin/simg2img "$img_file" "${img_file}.raw"
+                rm -f "$img_file"
+                mv -f "${img_file}.raw" "$img_file"
+              fi
+
+              # 3. Dò tìm vị trí chữ ký liblp geometry (gDla = 67 44 6c 61 hoặc 61 6c 44 67)
+              local lp_offset=$(python3 -c "
+import sys
+with open(\"$img_file\", \"rb\") as f:
+    data = f.read(16 * 1024 * 1024)
+for sig in [b\"gDla\", b\"alDg\"]:
+    pos = data.find(sig)
+    if pos != -1:
+        print(pos)
+        sys.exit(0)
+print(-1)
+")
+              echo "[DEBUG] liblp signature offset: $lp_offset"
+
+              if [ "$lp_offset" -gt 4096 ]; then
+                local skip_bytes=$((lp_offset - 4096))
+                echo "[INFO] Fixing shifted super.img header (trimming $skip_bytes bytes)..."
+                dd if="$img_file" of="${img_file}.fixed" bs=4096 skip=$((skip_bytes / 4096)) status=none
+                rm -f "$img_file"
+                mv -f "${img_file}.fixed" "$img_file"
+              elif [ "$lp_offset" -eq -1 ]; then
+                echo "[WARNING] Không tìm thấy cấu trúc super partition (liblp). Thử bung trực tiếp như một phân vùng đơn..."
+                mv -f "$img_file" "$out_dir/system.img"
+                return 0
+              fi
+
+              # 4. Chạy lpunpack (ưu tiên native binary, fallback sang Python)
               if [ -x "$work_dir/bin/Linux/x86_64/lpunpack" ]; then
                 echo "[INFO] Unpacking super.img with native lpunpack binary..."
-                "$work_dir/bin/Linux/x86_64/lpunpack" "$img_file" "$out_dir"
+                "$work_dir/bin/Linux/x86_64/lpunpack" "$img_file" "$out_dir" || python3 "$work_dir/bin/lpunpack.py" "$img_file" "$out_dir"
               elif command -v lpunpack >/dev/null 2>&1; then
-                echo "[INFO] Unpacking super.img with system lpunpack..."
-                lpunpack "$img_file" "$out_dir"
+                lpunpack "$img_file" "$out_dir" || python3 "$work_dir/bin/lpunpack.py" "$img_file" "$out_dir"
               else
-                echo "[INFO] Unpacking super.img with lpunpack.py..."
                 python3 "$work_dir/bin/lpunpack.py" "$img_file" "$out_dir"
               fi
+
+              rm -f "$img_file"
+              for i in "$out_dir"/*_a.img; do
+                [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
+              done
             }
 
             # 1. Bộ tải đa năng hỗ trợ mọi loại link
@@ -201,16 +258,7 @@ jobs:
                 rm -f "$baserom"
                 super_img=$(find build/baserom/ -name "super.img" | head -n 1)
                 if [ -n "$super_img" ]; then
-                    if file "$super_img" | grep -q "Android sparse image"; then
-                        /usr/bin/simg2img "$super_img" build/baserom/super_raw.img
-                        rm -f "$super_img"
-                        mv -f build/baserom/super_raw.img "$super_img"
-                    fi
-                    run_lpunpack "$super_img" build/baserom/images/
-                    rm -f "$super_img"
-                    for i in build/baserom/images/*_a.img; do
-                        [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
-                    done
+                    process_super_image "$super_img" "build/baserom/images"
                 fi
             elif [[ "$baserom" =~ \.bin$ ]]; then
                 echo "[INFO] Extracting direct payload.bin..."
@@ -240,33 +288,12 @@ jobs:
                     extract_from_zip "$baserom" "super.img.zst" "build/baserom"
                     rm -f "$baserom"
                     zstd -d --rm build/baserom/super.img.zst -o build/baserom/super.img
-                    if file build/baserom/super.img | grep -q "Android sparse image"; then
-                        /usr/bin/simg2img build/baserom/super.img build/baserom/super_raw.img
-                        rm -f build/baserom/super.img
-                        mv -f build/baserom/super_raw.img build/baserom/super.img
-                    fi
-                    run_lpunpack build/baserom/super.img build/baserom/images/
-                    rm -f build/baserom/super.img
-                    for i in build/baserom/images/*_a.img; do
-                        [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
-                    done
+                    process_super_image "build/baserom/super.img" "build/baserom/images"
 
                 elif echo "$zip_list" | grep -q "super\.img$"; then
                     extract_from_zip "$baserom" "super.img" "build/baserom"
                     rm -f "$baserom"
-                    ls -lh build/baserom/super.img
-                    file build/baserom/super.img
-                    if file build/baserom/super.img | grep -q "Android sparse image"; then
-                        echo "[INFO] Converting sparse super.img to raw..."
-                        /usr/bin/simg2img build/baserom/super.img build/baserom/super_raw.img
-                        rm -f build/baserom/super.img
-                        mv -f build/baserom/super_raw.img build/baserom/super.img
-                    fi
-                    run_lpunpack build/baserom/super.img build/baserom/images/
-                    rm -f build/baserom/super.img
-                    for i in build/baserom/images/*_a.img; do
-                        [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
-                    done
+                    process_super_image "build/baserom/super.img" "build/baserom/images"
 
                 elif echo "$zip_list" | grep -q "super\.img\."; then
                     echo "[INFO] Extracting split super.img.*..."
@@ -274,11 +301,7 @@ jobs:
                     rm -f "$baserom"
                     /usr/bin/simg2img build/baserom/*super.img.* build/baserom/super.img
                     rm -f build/baserom/*super.img.*
-                    run_lpunpack build/baserom/super.img build/baserom/images/
-                    rm -f build/baserom/super.img
-                    for i in build/baserom/images/*_a.img; do
-                        [ -f "$i" ] && mv "$i" "${i%_a.img}.img"
-                    done
+                    process_super_image "build/baserom/super.img" "build/baserom/images"
 
                 else
                     echo "[ERROR] Định dạng ROM không hỗ trợ! Danh sách file trong gói:"
