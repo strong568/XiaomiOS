@@ -93,11 +93,77 @@ jobs:
             export LD_LIBRARY_PATH="$work_dir/bin/$(uname)/$(uname -m)/lib:$work_dir/bin/$(uname)/$(uname -m)/:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
             source "$work_dir/functions.sh"
 
-            # Vá lpunpack.py: sửa self.size() thành lời gọi hàm và bỏ qua lỗi checksum của ROM port
-            if [ -f "$work_dir/bin/lpunpack.py" ]; then
-              sed -i "s/buffer\[0:self\.size\]/buffer[0:struct.calcsize(self._fmt)]/g" "$work_dir/bin/lpunpack.py" || true
-              sed -i "s/raise LpMetadataError(.*invalid checksum.*)/pass/g" "$work_dir/bin/lpunpack.py" || true
-            fi
+            # Tạo bộ giải nén super.img độc lập (hỗ trợ Python 3.12+, bỏ qua lỗi invalid checksum của ROM port)
+            python3 -c "
+import base64
+code = '''
+import os, sys, struct
+
+LP_PARTITION_RESERVED_BYTES = 4096
+LP_METADATA_GEOMETRY_MAGIC = 0x616c4467
+LP_METADATA_HEADER_MAGIC = 0x414C5030
+LP_SECTOR_SIZE = 512
+
+def unpack_super(img_path, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
+    with open(img_path, 'rb') as f:
+        f.seek(LP_PARTITION_RESERVED_BYTES)
+        geom = f.read(4096)
+        magic, struct_size, _, max_meta_size, max_meta_slots, logical_block_size = struct.unpack('<III32xIII', geom[:56])
+        if magic != LP_METADATA_GEOMETRY_MAGIC:
+            raise RuntimeError(f'Invalid geometry magic: {hex(magic)}')
+        
+        meta_offset = LP_PARTITION_RESERVED_BYTES + 4096 * 2
+        f.seek(meta_offset)
+        hdr = f.read(256)
+        h_magic, maj, min_v, h_size = struct.unpack('<IHHI', hdr[:12])
+        if h_magic != LP_METADATA_HEADER_MAGIC:
+            raise RuntimeError(f'Invalid metadata header magic: {hex(h_magic)}')
+        
+        tables_size = struct.unpack('<I', hdr[44:48])[0]
+        p_off, p_num, p_ent = struct.unpack('<III', hdr[80:92])
+        e_off, e_num, e_ent = struct.unpack('<III', hdr[92:104])
+        
+        f.seek(meta_offset + h_size)
+        tables = f.read(tables_size)
+        
+        extents = []
+        for i in range(e_num):
+            off = e_off + i * e_ent
+            num_sec, target_type, target_data, target_src = struct.unpack('<QIQI', tables[off:off+24])
+            extents.append((num_sec, target_type, target_data))
+            
+        for i in range(p_num):
+            off = p_off + i * p_ent
+            raw_name = tables[off:off+36]
+            name = raw_name.split(b'\x00', 1)[0].decode('utf-8', errors='ignore')
+            attrs, first_ext, num_ext, group_idx = struct.unpack('<IIII', tables[off+36:off+52])
+            if not name or num_ext == 0:
+                continue
+            out_file = os.path.join(out_dir, f'{name}.img')
+            print(f'[LPUNPACK] Extracting {name}.img ({num_ext} extents)...')
+            with open(out_file, 'wb') as out_f:
+                for e_idx in range(first_ext, first_ext + num_ext):
+                    num_sec, target_type, target_data = extents[e_idx]
+                    size_bytes = num_sec * LP_SECTOR_SIZE
+                    if target_type == 0:
+                        f.seek(target_data * LP_SECTOR_SIZE)
+                        rem = size_bytes
+                        while rem > 0:
+                            chunk = f.read(min(rem, 16 * 1024 * 1024))
+                            if not chunk:
+                                break
+                            out_f.write(chunk)
+                            rem -= len(chunk)
+                    else:
+                        out_f.seek(size_bytes - 1, 1)
+                        out_f.write(b'\x00')
+
+if __name__ == '__main__':
+    unpack_super(sys.argv[1], sys.argv[2])
+'''
+open('/tmp/fast_lpunpack.py', 'w').write(code)
+"
 
             extract_from_zip() {
               local zip_file="$1"
@@ -150,8 +216,8 @@ jobs:
               if [ -x "$work_dir/bin/Linux/x86_64/lpunpack" ] && "$work_dir/bin/Linux/x86_64/lpunpack" "$img_file" "$out_dir" 2>/dev/null; then
                 echo "[INFO] Unpacked with native lpunpack."
               else
-                echo "[INFO] Native lpunpack rejected checksum, unpacking with patched lpunpack.py..."
-                python3 "$work_dir/bin/lpunpack.py" "$img_file" "$out_dir"
+                echo "[INFO] Native lpunpack rejected checksum, unpacking with fast_lpunpack.py..."
+                python3 /tmp/fast_lpunpack.py "$img_file" "$out_dir"
               fi
 
               rm -f "$img_file"
