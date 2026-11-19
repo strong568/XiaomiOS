@@ -41,41 +41,41 @@ jobs:
       contents: write
 
     steps:
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@master
-        with:
-          swap-size-mb: 1024
-          root-reserve-mb: 512
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-
-      - name: Clean All Unused file, application
+      - name: Free Disk Space (Fast)
         run: |
-          docker rmi `docker images -q` || true
-          sudo apt-get -y purge azure-cli ghc* zulu* hhvm llvm* firefox google* dotnet* powershell php* || true
-          sudo apt-get -y autoremove --purge || true
-          sudo rm -rf /usr/share/dotnet /etc/php /usr/local/lib/android /opt/hostedtoolcache/CodeQL || true
-          sudo apt-get -y autoclean && sudo apt-get clean
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost \
+            /usr/share/swift
+          df -h /
 
       - name: Checkout repository
-        uses: actions/checkout@main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      - name: Set up Timezone
-        run: sudo timedatectl set-timezone Asia/Ho_Chi_Minh
-
-      - name: Install Dependencies
+      - name: Set up Timezone & Install Dependencies
         run: |
+          sudo timedatectl set-timezone Asia/Ho_Chi_Minh
           export DEBIAN_FRONTEND=noninteractive
-          sudo rm -f /var/lib/dpkg/info/mysql*
+
+          # Tắt man-db và initramfs trigger để tăng tốc apt-get lên gấp 3-4 lần
           echo "set man-db/auto-update false" | sudo debconf-communicate
           sudo dpkg-reconfigure -f noninteractive man-db || true
-          sudo dpkg --configure -a || true
+          sudo ln -sf /bin/true /usr/local/sbin/update-initramfs
+
           sudo bash setup.sh
           sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends xmlstarlet aapt zipalign p7zip-full libarchive-tools erofs-utils f2fs-tools libc++1 libc++abi1 unzip aria2 zstd lz4 brotli file android-sdk-libsparse-utils curl jq python3-pip
-          sudo pip3 install --break-system-packages --no-cache-dir -q gdown || sudo pip3 install --no-cache-dir -q gdown
+          sudo apt-get install -y --no-install-recommends \
+            xmlstarlet aapt zipalign p7zip-full libarchive-tools \
+            erofs-utils f2fs-tools libc++1 libc++abi1 unzip aria2 \
+            zstd lz4 brotli file android-sdk-libsparse-utils curl jq
+
+          sudo rm -f /usr/local/sbin/update-initramfs
+          pip3 install --break-system-packages --no-cache-dir -q gdown || pip3 install --no-cache-dir -q gdown
           sudo ln -sf /usr/lib/x86_64-linux-gnu/libc++.so.1 /usr/lib/x86_64-linux-gnu/libc++.so 2>/dev/null || true
           sudo ldconfig
           sudo chmod -R 777 bin/ *.sh
@@ -89,6 +89,7 @@ jobs:
           LP_METADATA_GEOMETRY_MAGIC = 0x616c4467
           LP_METADATA_HEADER_MAGIC = 0x414C5030
           LP_SECTOR_SIZE = 512
+          TARGET_PARTS = {'system', 'system_a', 'system_ext', 'system_ext_a', 'product', 'product_a', 'vendor', 'vendor_a'}
 
           def unpack_super(img_path, out_dir):
               os.makedirs(out_dir, exist_ok=True)
@@ -130,7 +131,7 @@ jobs:
                       raw_name = tables[off:off+36]
                       name = raw_name.split(b'\x00', 1)[0].decode('utf-8', errors='ignore')
                       attrs, first_ext, num_ext, group_idx = struct.unpack('<IIII', tables[off+36:off+52])
-                      if not name or num_ext == 0:
+                      if not name or num_ext == 0 or name not in TARGET_PARTS:
                           continue
                       out_file = os.path.join(out_dir, f'{name}.img')
                       print(f'[LPUNPACK] Extracting {name}.img ({num_ext} extents)...')
@@ -228,7 +229,7 @@ jobs:
             done
           }
 
-          # 1. Bộ tải đa năng hỗ trợ mọi loại link
+          # 1. Bộ tải đa năng tốc độ cao
           download_universal_rom() {
             local url="$1"
             echo "[INFO] Đang xử lý link tải: $url"
@@ -238,18 +239,18 @@ jobs:
               if [[ "$url" =~ /folders/ ]]; then
                 python3 -m gdown --folder "$url" -O "$work_dir/"
               else
-                if ! python3 -m gdown --fuzzy "$url" -O "$work_dir/"; then
-                  echo "[WARNING] gdown bị chặn/lỗi, chuyển sang phương thức bypass drive.usercontent..."
-                  local file_id=$(python3 -c 'import re, sys; m=re.search(r"(?:id=|/d/)([a-zA-Z0-9_-]{20,})", sys.argv[1]); print(m.group(1) if m else "")' "$url")
-                  if [ -z "$file_id" ]; then
-                    echo "[ERROR] Không trích xuất được File ID từ link Google Drive!"
-                    exit 1
-                  fi
-                  local html_page=$(curl -sL -c /tmp/gd_cookies.txt -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" "https://drive.usercontent.google.com/download?id=${file_id}&export=download&confirm=t")
-                  local uuid_val=$(echo "$html_page" | grep -oE 'name="uuid" value="[^"]+"' | head -n 1 | cut -d'"' -f4)
-                  local dl_url="https://drive.usercontent.google.com/download?id=${file_id}&export=download&confirm=t"
+                local file_id=$(python3 -c 'import re, sys; m=re.search(r"(?:id=|/d/)([a-zA-Z0-9_-]{20,})", sys.argv[1]); print(m.group(1) if m else "")' "$url")
+                if [ -n "$file_id" ]; then
+                  echo "[INFO] Tải trực tiếp 16 luồng qua drive.usercontent + aria2c (ID: $file_id)..."
+                  local base_gd="https://drive.usercontent.google.com/download?id=${file_id}&export=download&confirm=t"
+                  # Chỉ đọc tối đa 64KB đầu tiên để lấy uuid (tránh curl tải nhầm cả file ROM vào RAM)
+                  local head_chunk=$(curl -sL -c /tmp/gd_cookies.txt -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" "$base_gd" | head -c 65536 | tr -d '\0')
+                  local uuid_val=$(echo "$head_chunk" | grep -oE 'name="uuid" value="[^"]+"' | head -n 1 | cut -d'"' -f4)
+                  local dl_url="$base_gd"
                   [ -n "$uuid_val" ] && dl_url="${dl_url}&uuid=${uuid_val}"
-                  aria2c -x 16 -s 16 -k 1M --load-cookies=/tmp/gd_cookies.txt -U "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --content-disposition "$dl_url" -d "$work_dir"
+                  aria2c -x 16 -s 16 -k 1M --load-cookies=/tmp/gd_cookies.txt -U "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --content-disposition "$dl_url" -d "$work_dir" || python3 -m gdown "$url" -O "$work_dir/"
+                else
+                  python3 -m gdown "$url" -O "$work_dir/"
                 fi
               fi
 
@@ -369,7 +370,7 @@ jobs:
 
           find "$work_dir/build/baserom/images" -maxdepth 1 -name "*.img" ! -name "system.img" ! -name "system_ext.img" ! -name "product.img" ! -name "vendor.img" -delete
 
-          # 3. Bung các phân vùng cần thiết (giữ hardlink .bak để chống bị extract_partition xóa mất khi lỗi)
+          # 3. Bung các phân vùng cần thiết
           for part in system system_ext product vendor; do
               img_path="$work_dir/build/baserom/images/${part}.img"
               bak_path="${img_path}.bak"
@@ -468,6 +469,7 @@ jobs:
 
       - name: Prepare Release Info
         id: release_info
+        if: env.DUMP_STOCK_PATH != ''
         env:
           ROM_TITLE: ${{ inputs.rom_title }}
           RAW_CHANGELOG: ${{ inputs.rom_changelog }}
