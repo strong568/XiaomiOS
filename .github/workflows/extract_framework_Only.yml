@@ -160,8 +160,9 @@ jobs:
       - name: Download & Unpack Partitions
         env:
           INPUT_URL: ${{ inputs.input_url }}
+          RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
         run: |
-          sudo env INPUT_URL="$INPUT_URL" GH_ENV="$GITHUB_ENV" bash << 'EOF'
+          sudo env INPUT_URL="$INPUT_URL" RCLONE_CONF="$RCLONE_CONF" GH_ENV="$GITHUB_ENV" bash << 'EOF'
           set -e
           work_dir=$(pwd)
           export PATH="/usr/local/bin:$HOME/.local/bin:$work_dir/bin/$(uname)/$(uname -m)/:$PATH"
@@ -240,17 +241,45 @@ jobs:
                 python3 -m gdown --folder "$url" -O "$work_dir/"
               else
                 local file_id=$(python3 -c 'import re, sys; m=re.search(r"(?:id=|/d/)([a-zA-Z0-9_-]{20,})", sys.argv[1]); print(m.group(1) if m else "")' "$url")
-                if [ -n "$file_id" ]; then
-                  echo "[INFO] Tải trực tiếp 16 luồng qua drive.usercontent + aria2c (ID: $file_id)..."
-                  local base_gd="https://drive.usercontent.google.com/download?id=${file_id}&export=download&confirm=t"
-                  # Chỉ đọc tối đa 64KB đầu tiên để lấy uuid (tránh curl tải nhầm cả file ROM vào RAM)
-                  local head_chunk=$(curl -sL -c /tmp/gd_cookies.txt -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" "$base_gd" | head -c 65536 | tr -d '\0')
-                  local uuid_val=$(echo "$head_chunk" | grep -oE 'name="uuid" value="[^"]+"' | head -n 1 | cut -d'"' -f4)
-                  local dl_url="$base_gd"
-                  [ -n "$uuid_val" ] && dl_url="${dl_url}&uuid=${uuid_val}"
-                  aria2c -x 16 -s 16 -k 1M --load-cookies=/tmp/gd_cookies.txt -U "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --content-disposition "$dl_url" -d "$work_dir" || python3 -m gdown "$url" -O "$work_dir/"
-                else
-                  python3 -m gdown "$url" -O "$work_dir/"
+                local gd_ok=false
+
+                if [ -n "$file_id" ] && [ -n "$RCLONE_CONF" ]; then
+                  echo "[INFO] Đang thử tải qua Rclone OAuth (ID: $file_id)..."
+                  if ! command -v rclone >/dev/null 2>&1; then
+                    curl -fsSL https://rclone.org/install.sh | bash >/dev/null
+                  fi
+                  mkdir -p /tmp/rclone_cfg
+                  printf '%s' "$RCLONE_CONF" | tr -d '\r\n ' | base64 -d > /tmp/rclone_cfg/rclone.conf
+
+                  local remote_name="gdrive:"
+                  if ! rclone listremotes --config /tmp/rclone_cfg/rclone.conf | grep -q "^gdrive:$"; then
+                    remote_name=$(rclone listremotes --config /tmp/rclone_cfg/rclone.conf | head -n 1)
+                  fi
+
+                  if [ -n "$remote_name" ] && rclone backend copyid "$remote_name" "$file_id" "$work_dir/" \
+                    --config /tmp/rclone_cfg/rclone.conf \
+                    --drive-acknowledge-abuse \
+                    --stats 5s -v; then
+                    gd_ok=true
+                  else
+                    echo "[WARN] Rclone tải thất bại, chuyển sang dự phòng aria2c/gdown..."
+                  fi
+                  rm -rf /tmp/rclone_cfg
+                fi
+
+                if [ "$gd_ok" = false ]; then
+                  if [ -n "$file_id" ]; then
+                    echo "[INFO] Tải trực tiếp 16 luồng qua drive.usercontent + aria2c (ID: $file_id)..."
+                    local base_gd="https://drive.usercontent.google.com/download?id=${file_id}&export=download&confirm=t"
+                    # Chỉ đọc tối đa 64KB đầu tiên để lấy uuid (tránh curl tải nhầm cả file ROM vào RAM)
+                    local head_chunk=$(curl -sL -c /tmp/gd_cookies.txt -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" "$base_gd" | head -c 65536 | tr -d '\0')
+                    local uuid_val=$(echo "$head_chunk" | grep -oE 'name="uuid" value="[^"]+"' | head -n 1 | cut -d'"' -f4)
+                    local dl_url="$base_gd"
+                    [ -n "$uuid_val" ] && dl_url="${dl_url}&uuid=${uuid_val}"
+                    aria2c -x 16 -s 16 -k 1M --load-cookies=/tmp/gd_cookies.txt -U "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --content-disposition "$dl_url" -d "$work_dir" || python3 -m gdown "$url" -O "$work_dir/"
+                  else
+                    python3 -m gdown "$url" -O "$work_dir/"
+                  fi
                 fi
               fi
 
