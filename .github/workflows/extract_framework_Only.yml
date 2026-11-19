@@ -235,12 +235,24 @@ jobs:
               local url="$1"
               echo "[INFO] Đang xử lý link tải: $url"
 
-              if [[ "$url" =~ drive\.google\.com ]]; then
+              if [[ "$url" =~ drive\.(usercontent\.)?google\.com ]]; then
                 echo "[INFO] Nhận diện link Google Drive..."
                 if [[ "$url" =~ /folders/ ]]; then
                   python3 -m gdown --folder "$url" -O "$work_dir/"
                 else
-                  python3 -m gdown "$url" -O "$work_dir/"
+                  if ! python3 -m gdown --fuzzy "$url" -O "$work_dir/"; then
+                    echo "[WARNING] gdown bị chặn/lỗi, chuyển sang phương thức bypass drive.usercontent..."
+                    local file_id=$(python3 -c "import re, sys; m=re.search(r'(?:id=|/d/)([a-zA-Z0-9_-]{20,})', sys.argv[1]); print(m.group(1) if m else '')" "$url")
+                    if [ -z "$file_id" ]; then
+                      echo "[ERROR] Không trích xuất được File ID từ link Google Drive!"
+                      exit 1
+                    fi
+                    local html_page=$(curl -sL -c /tmp/gd_cookies.txt -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" "https://drive.usercontent.google.com/download?id=${file_id}&export=download&confirm=t")
+                    local uuid_val=$(echo "$html_page" | grep -oE 'name="uuid" value="[^"]+"' | head -n 1 | cut -d'"' -f4)
+                    local dl_url="https://drive.usercontent.google.com/download?id=${file_id}&export=download&confirm=t"
+                    [ -n "$uuid_val" ] && dl_url="${dl_url}&uuid=${uuid_val}"
+                    aria2c -x 16 -s 16 -k 1M --load-cookies=/tmp/gd_cookies.txt -U "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --content-disposition "$dl_url" -d "$work_dir"
+                  fi
                 fi
 
               elif [[ "$url" =~ pixeldrain\.com/(u|l)/([a-zA-Z0-9]+) ]]; then
@@ -283,15 +295,16 @@ jobs:
             download_universal_rom "$INPUT_URL"
 
             if [[ ! -f "$baserom" ]]; then
-                baserom=$(find "$work_dir" -maxdepth 2 -type f \( -iname "*.zip" -o -iname "*.tgz" -o -iname "*.tar.gz" -o -iname "*.bin" -o -iname "*.img" \) ! -name "magisk*" ! -name "twrp*" -printf "%s %p\n" 2>/dev/null | sort -nr | head -n 1 | cut -d" " -f2-)
+                baserom=$(find "$work_dir" -maxdepth 2 -type f \( -iname "*.zip" -o -iname "*.tgz" -o -iname "*.tar.gz" -o -iname "*.bin" -o -iname "*.img" -o -iname "*.html" \) ! -name "magisk*" ! -name "twrp*" -printf "%s %p\n" 2>/dev/null | sort -nr | head -n 1 | cut -d" " -f2-)
             fi
 
-            if [[ ! -f "$baserom" ]]; then
-                echo "[ERROR] Không tìm thấy file ROM sau khi tải!"
+            if [[ ! -f "$baserom" ]] || head -c 512 "$baserom" | grep -qiE "<!DOCTYPE html|<html"; then
+                echo "[ERROR] File tải về bị Google Drive chặn quota IP server (trả về trang HTML thay vì file ROM)."
+                echo "[GỢI Ý] Hãy mở link trên Google Drive -> chọn 'Tạo bản sao' (Make a copy) về Drive của bạn -> chia sẻ công khai link bản sao đó và chạy lại!"
                 exit 1
             fi
 
-            echo "[INFO] File ROM đã tải: $baserom"
+            echo "[INFO] File ROM đã tải: $baserom ($(du -h "$baserom" | cut -f1))"
             echo "STOCK_BASEROM=$baserom" >> "$GH_ENV"
 
             rm -rf build/baserom/
