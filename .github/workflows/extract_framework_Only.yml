@@ -80,6 +80,77 @@ jobs:
           sudo ldconfig
           sudo chmod -R 777 bin/ *.sh
 
+      - name: Create Fast Lpunpack Script
+        run: |
+          cat << 'EOF' > /tmp/fast_lpunpack.py
+          import os, sys, struct
+
+          LP_PARTITION_RESERVED_BYTES = 4096
+          LP_METADATA_GEOMETRY_MAGIC = 0x616c4467
+          LP_METADATA_HEADER_MAGIC = 0x414C5030
+          LP_SECTOR_SIZE = 512
+
+          def unpack_super(img_path, out_dir):
+              os.makedirs(out_dir, exist_ok=True)
+              with open(img_path, 'rb') as f:
+                  f.seek(LP_PARTITION_RESERVED_BYTES)
+                  geom = f.read(4096)
+                  magic, struct_size, _, max_meta_size, max_meta_slots, logical_block_size = struct.unpack('<III32xIII', geom[:56])
+                  if magic != LP_METADATA_GEOMETRY_MAGIC:
+                      raise RuntimeError(f'Invalid geometry magic: {hex(magic)}')
+
+                  meta_offset = LP_PARTITION_RESERVED_BYTES + 4096 * 2
+                  f.seek(meta_offset)
+                  hdr = f.read(256)
+                  h_magic, maj, min_v, h_size = struct.unpack('<IHHI', hdr[:12])
+                  if h_magic != LP_METADATA_HEADER_MAGIC:
+                      raise RuntimeError(f'Invalid metadata header magic: {hex(h_magic)}')
+
+                  tables_size = struct.unpack('<I', hdr[44:48])[0]
+                  p_off, p_num, p_ent = struct.unpack('<III', hdr[80:92])
+                  e_off, e_num, e_ent = struct.unpack('<III', hdr[92:104])
+
+                  f.seek(meta_offset + h_size)
+                  tables = f.read(tables_size)
+
+                  extents = []
+                  for i in range(e_num):
+                      off = e_off + i * e_ent
+                      num_sec, target_type, target_data, target_src = struct.unpack('<QIQI', tables[off:off+24])
+                      extents.append((num_sec, target_type, target_data))
+
+                  for i in range(p_num):
+                      off = p_off + i * p_ent
+                      raw_name = tables[off:off+36]
+                      name = raw_name.split(b'\x00', 1)[0].decode('utf-8', errors='ignore')
+                      attrs, first_ext, num_ext, group_idx = struct.unpack('<IIII', tables[off+36:off+52])
+                      if not name or num_ext == 0:
+                          continue
+                      out_file = os.path.join(out_dir, f'{name}.img')
+                      print(f'[LPUNPACK] Extracting {name}.img ({num_ext} extents)...')
+                      with open(out_file, 'wb') as out_f:
+                          for e_idx in range(first_ext, first_ext + num_ext):
+                              num_sec, target_type, target_data = extents[e_idx]
+                              size_bytes = num_sec * LP_SECTOR_SIZE
+                              if target_type == 0:
+                                  f.seek(target_data * LP_SECTOR_SIZE)
+                                  rem = size_bytes
+                                  while rem > 0:
+                                      chunk = f.read(min(rem, 16 * 1024 * 1024))
+                                      if not chunk:
+                                          break
+                                      out_f.write(chunk)
+                                      rem -= len(chunk)
+                              else:
+                                  out_f.seek(size_bytes - 1, 1)
+                                  out_f.write(b'\x00')
+
+          if __name__ == '__main__':
+              unpack_super(sys.argv[1], sys.argv[2])
+          EOF
+          # Xóa khoảng trắng thừa đầu dòng do thụt lề YAML
+          sed -i 's/^          //' /tmp/fast_lpunpack.py
+
       - name: Download & Unpack Partitions
         env:
           INPUT_URL: ${{ inputs.input_url }}
@@ -92,9 +163,6 @@ jobs:
             export PATH="/usr/local/bin:$HOME/.local/bin:$work_dir/bin/$(uname)/$(uname -m)/:$PATH"
             export LD_LIBRARY_PATH="$work_dir/bin/$(uname)/$(uname -m)/lib:$work_dir/bin/$(uname)/$(uname -m)/:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
             source "$work_dir/functions.sh"
-
-            # Giải mã script fast_lpunpack.py từ Base64 (đã sửa chuẩn offset struct header)
-            echo "aW1wb3J0IG9zLCBzeXMsIHN0cnVjdAoKTFBfUEFSVElUSU9OX1JFU0VSVkVEX0JZVEVTID0gNDA5NgpMUF9NRVRBREFUQV9HRU9NRVRSWV9NQUdJQyA9IDB4NjE2YzQ0NjcKTFBfTUVUQURBVEFfSEVBREVSX01BR0lDID0gMHg0MTRDNTAzMApMUF9TRUNUT1JfU0laRSA9IDUxMgoKZGVmIHVucGFja19zdXBlcihpbWdfcGF0aCwgb3V0X2Rpcik6CiAgICBvcy5tYWtlZGlycyhvdXRfZGlyLCBleGlzdF9vaz1UcnVlKQogICAgd2l0aCBvcGVuKGltZ19wYXRoLCAncmInKSBhcyBmOgogICAgICAgIGYuc2VlayhMUF9QQVJUSVRJT05fUkVTRVJWRURfQllURVMpCiAgICAgICAgZ2VvbSA9IGYucmVhZCg0MDk2KQogICAgICAgIG1hZ2ljLCBzdHJ1Y3Rfc2l6ZSwgXywgbWF4X21ldGFfc2l6ZSwgbWF4X21ldGFfc2xvdHMsIGxvZ2ljYWxfYmxvY2tfc2l6ZSA9IHN0cnVjdC51bnBhY2soJzxJSUkzMnhJSUknLCBnZW9tWzo1Nl0pCiAgICAgICAgaWYgbWFnaWMgIT0gTFBfTUVUQURBVEFfR0VPTUVUUllfTUFHSUM6CiAgICAgICAgICAgIHJhaXNlIFJ1bnRpbWVFcnJvcihmJ0ludmFsaWQgZ2VvbWV0cnkgbWFnaWM6IHtoZXgobWFnaWMpfScpCiAgICAgICAgbWV0YV9vZmZzZXQgPSBMUF9QQVJUSVRJT05fUkVTRVJWRURfQllURVMgKyA0MDk2ICogMgogICAgICAgIGYuc2VlayhtZXRhX29mZnNldCkKICAgICAgICBoZHIgPSBmLnJlYWQoMjU2KQogICAgICAgIGhfbWFnaWMsIG1haiwgbWluX3YsIGhfc2l6ZSA9IHN0cnVjdC51bnBhY2soJzxJSUhJMnknLCBoZHJbOjE2XSkKICAgICAgICBpZiBoX21hZ2ljICE9IExQX01FVEFEQVRBX0hFQURFUl9NQUdJQzoKICAgICAgICAgICAgcmFpc2UgUnVudGltZUVycm9yKGYnSW52YWxpZCBtZXRhZGF0YSBoZWFkZXIgbWFnaWM6IHtoZXgoaF9tYWdpYyl9JykKICAgICAgICB0YWJsZXNfc2l6ZSA9IHN0cnVjdC51bnBhY2soJzxJJywgaGRyWzQ0OjQ4XSlbMF0KICAgICAgICBwX29mZiwgcF9udW0sIHBfZW50ID0gc3RydWN0LnVucGFjaygnPElJSScsIGhkcls4MDo5Ml0pCiAgICAgICAgZV9vZmYsIGVfbnVtLCBlX2VudCA9IHN0cnVjdC51bnBhY2soJzxJSUknLCBoZHJbOTI6MTA0XSkKICAgICAgICBmLnNlZWsobWV0YV9vZmZzZXQgKyBoX3NpemUpCiAgICAgICAgdGFibGVzID0gZi5yZWFkKHRhYmxlc19zaXplKQogICAgICAgIGV4dGVudHMgPSBbXQogICAgICAgIGZvciBpIGluIHJhbmdlKGVfbnVtKToKICAgICAgICAgICAgb2ZmID0gZV9vZmYgKyBpICogZV9lbnQKICAgICAgICAgICAgbnVtX3NlYywgdGFyZ2V0X3R5cGUsIHRhcmdldF9kYXRhLCB0YXJnZXRfc3JjID0gc3RydWN0LnVucGFjaygnPFFJUFFJJywgdGFibGVzW29mZjpvZmYrMjRdKQogICAgICAgICAgICBleHRlbnRzLmFwcGVuZCgobnVtX3NlYywgdGFyZ2V0X3R5cGUsIHRhcmdldF9kYXRhKSkKICAgICAgICBmb3IgaSBpbiByYW5nZShwX251bSk6CiAgICAgICAgICAgIG9mZiA9IHBfb2ZmICsgaSAqIHBfZW50CiAgICAgICAgICAgIHJhd19uYW1lID0gdGFibGVzW29mZjpvZmYrMzZdCiAgICAgICAgICAgIG5hbWUgPSByYXdfbmFtZS5zcGxpdChiJ1x4MDAnLCAxKVswXS5kZWNvZGUoJ3V0Zi04JywgZXJyb3JzPSdpZ25vcmUnKQogICAgICAgICAgICBhdHRycywgZmlyc3RfZXh0LCBudW1fZXh0LCBncm91cF9pZHggPSBzdHJ1Y3QudW5wYWNrKCc8SUlJSScsIHRhYmxlc1tvZmYrMzY6b2ZmKzUyXSkKICAgICAgICAgICAgaWYgbm90IG5hbWUgb3IgbnVtX2V4dCA9PSAwOgogICAgICAgICAgICAgICAgY29udGludWUKICAgICAgICAgICAgb3V0X2ZpbGUgPSBvcy5wYXRoLmpvaW4ob3V0X2RpciwgZid7bmFtZX0uaW1nJykKICAgICAgICAgICAgcHJpbnQoZidbTFBVTlBBQ0tdIEV4dHJhY3Rpbmcge25hbWV9LmltZyAoe251bV9leHR9IGV4dGVudHMpLi4uJykKICAgICAgICAgICAgd2l0aCBvcGVuKG91dF9maWxlLCAnd2InKSBhcyBvdXRfZjoKICAgICAgICAgICAgICAgIGZvciBlX2lkeCBpbiByYW5nZShmaXJzdF9leHQsIGZpcnN0X2V4dCArIG51bV9leHQpOgogICAgICAgICAgICAgICAgICAgIG51bV9zZWMsIHRhcmdldF90eXBlLCB0YXJnZXRfZGF0YSA9IGV4dGVudHNbZV9pZHhdCiAgICAgICAgICAgICAgICAgICAgc2l6ZV9ieXRlcyA9IG51bV9zZWMgKiBMUF9TRUNUT1JfU0laRQogICAgICAgICAgICAgICAgICAgIGlmIHRhcmdldF90eXBlID09IDA6CiAgICAgICAgICAgICAgICAgICAgICAgIGYuc2Vlayh0YXJnZXRfZGF0YSAqIExQX1NFQ1RPUl9TSVpFKQogICAgICAgICAgICAgICAgICAgICAgICByZW0gPSBzaXplX2J5dGVzCiAgICAgICAgICAgICAgICAgICAgICAgIHdoaWxlIHJlbSA+IDA6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICBjaHVuayA9IGYucmVhZChtaW4ocmVtLCAxNiAqIDEwMjQgKiAxMDI0KSkKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGlmIG5vdCBjaHVuazoKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBicmVhawogICAgICAgICAgICAgICAgICAgICAgICAgICAgb3V0X2Yud3JpdGUoY2h1bmspCiAgICAgICAgICAgICAgICAgICAgICAgICAgICByZW0gLT0gbGVuKGNodW5rKQogICAgICAgICAgICAgICAgICAgIGVsc2U6CiAgICAgICAgICAgICAgICAgICAgICAgIG91dF9mLnNlZWsoc2l6ZV9ieXRlcyAtIDEsIDEpCiAgICAgICAgICAgICAgICAgICAgICAgIG91dF9mLndyaXRlKGInXHgwMCcpCgppZiBfX25hbWVfXyA9PSAnX19tYWluX18nOgogICAgdW5wYWNrX3N1cGVyKHN5cy5hcmd2WzFdLCBzeXMuYXJndlsyXSkK" | base64 -d > /tmp/fast_lpunpack.py
 
             extract_from_zip() {
               local zip_file="$1"
