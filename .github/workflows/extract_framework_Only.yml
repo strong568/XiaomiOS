@@ -95,17 +95,23 @@ jobs:
               with open(img_path, 'rb') as f:
                   f.seek(LP_PARTITION_RESERVED_BYTES)
                   geom = f.read(4096)
-                  magic, struct_size, _, max_meta_size, max_meta_slots, logical_block_size = struct.unpack('<III32xIII', geom[:56])
+                  magic, struct_size, max_meta_size = struct.unpack('<II32xI', geom[:44])
                   if magic != LP_METADATA_GEOMETRY_MAGIC:
                       raise RuntimeError(f'Invalid geometry magic: {hex(magic)}')
 
-                  meta_offset = LP_PARTITION_RESERVED_BYTES + 4096 * 2
-                  f.seek(meta_offset)
-                  hdr = f.read(256)
-                  h_magic, maj, min_v, h_size = struct.unpack('<IHHI', hdr[:12])
-                  if h_magic != LP_METADATA_HEADER_MAGIC:
-                      raise RuntimeError(f'Invalid metadata header magic: {hex(h_magic)}')
+                  base_meta = LP_PARTITION_RESERVED_BYTES + 4096 * 2
+                  meta_offset = None
+                  for candidate in (base_meta, base_meta + max_meta_size):
+                      f.seek(candidate)
+                      hdr = f.read(256)
+                      if len(hdr) >= 12 and struct.unpack('<I', hdr[:4])[0] == LP_METADATA_HEADER_MAGIC:
+                          meta_offset = candidate
+                          break
 
+                  if meta_offset is None:
+                      raise RuntimeError('Could not find valid LpMetadataHeader magic')
+
+                  h_magic, maj, min_v, h_size = struct.unpack('<IHHI', hdr[:12])
                   tables_size = struct.unpack('<I', hdr[44:48])[0]
                   p_off, p_num, p_ent = struct.unpack('<III', hdr[80:92])
                   e_off, e_num, e_ent = struct.unpack('<III', hdr[92:104])
@@ -148,8 +154,7 @@ jobs:
           if __name__ == '__main__':
               unpack_super(sys.argv[1], sys.argv[2])
           EOF
-          # Xóa khoảng trắng thừa đầu dòng do thụt lề YAML
-          sed -i 's/^          //' /tmp/fast_lpunpack.py
+          python3 -c "import textwrap, pathlib; p = pathlib.Path('/tmp/fast_lpunpack.py'); p.write_text(textwrap.dedent(p.read_text()))"
 
       - name: Download & Unpack Partitions
         env:
