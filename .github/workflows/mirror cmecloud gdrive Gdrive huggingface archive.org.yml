@@ -19,14 +19,19 @@ jobs:
     steps:
       - name: Install dependencies
         run: |
-          # 1. Cài rclone trực tiếp dạng binary (không dùng script để tránh kích hoạt cập nhật mandb gây treo runner)
+          # 1. Cài aria2 và zip (bỏ qua recommends để tránh kích hoạt mandb)
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends aria2 zip
+
+          # 2. Cài rclone trực tiếp dạng binary
           curl -fsSL https://downloads.rclone.org/rclone-current-linux-amd64.zip -o rclone.zip
           unzip -q -j rclone.zip "*/rclone" -d /usr/local/bin/
           rm -f rclone.zip
           chmod +x /usr/local/bin/rclone
 
-          # 2. Cài các gói Python với cờ vượt rào PEP 668 trên Ubuntu 24.04
-          pip3 install --no-cache-dir --break-system-packages gdown internetarchive huggingface_hub
+          # 3. Cài các gói Python với cờ vượt rào PEP 668 trên Ubuntu 24.04
+          pip3 install --no-cache-dir --break-system-packages gdown internetarchive huggingface_hub || \
+          pip3 install --no-cache-dir gdown internetarchive huggingface_hub
 
 
       - name: Download file / folder (Multi-host support)
@@ -93,9 +98,6 @@ jobs:
                        "$RAW_URL"
               fi
             fi
-
-
-
 
           # 2. Pixeldrain
           elif echo "$RAW_URL" | grep -q "pixeldrain.com"; then
@@ -169,12 +171,12 @@ jobs:
           # Lọc file tải về có dung lượng lớn nhất
           FILE_NAME=$(ls -S -I "*.txt" -I "*.log" -I "*.yml" 2>/dev/null | head -n 1)
 
-          if [ -z "$FILE_NAME" ]; then
+          if [ -z "$FILE_NAME" ] || [ ! -f "$FILE_NAME" ]; then
             echo "❌ Không tìm thấy file hợp lệ sau khi tải!"
             exit 1
           fi
 
-          FILE_SIZE=$(stat -c\%s "$FILE_NAME")
+          FILE_SIZE=$(stat -c%s "$FILE_NAME")
           echo "📏 Dung lượng: $FILE_SIZE bytes"
 
           if [ "$FILE_SIZE" -lt 104857600 ]; then
@@ -206,6 +208,8 @@ jobs:
               --drive-chunk-size 64M \
               --transfers 4
 
+            echo "GDRIVE_OK=1" >> $GITHUB_ENV
+
             # Lấy link chia sẻ công khai của file vừa upload
             GDRIVE_LINK=$(rclone link "gdrive:Mirror-Cloud/$FILE_NAME" 2>/dev/null || echo "")
             echo "GDRIVE_LINK=${GDRIVE_LINK}" >> $GITHUB_ENV
@@ -226,11 +230,18 @@ jobs:
           else
             echo "Bắt đầu upload $FILE_NAME lên repo Strong568/Mirror-Cloud..."
             
-            # Sử dụng huggingface-cli chuẩn, tự động nhận HF_TOKEN từ env mà không cần truyền flag --token
-            huggingface-cli upload Strong568/Mirror-Cloud \
-              "$FILE_NAME" \
-              "$FILE_NAME" \
-              --repo-type model
+            python3 -c '
+          import sys
+          from huggingface_hub import HfApi
+
+          api = HfApi(token=sys.argv[1])
+          api.upload_file(
+              path_or_fileobj=sys.argv[2],
+              path_in_repo=sys.argv[3],
+              repo_id="Strong568/Mirror-Cloud",
+              repo_type="model",
+          )
+          ' "$HF_TOKEN" "$FILE_NAME" "$FILE_NAME"
 
             HF_LINK="https://huggingface.co/Strong568/Mirror-Cloud/resolve/main/${FILE_NAME}"
             echo "HF_LINK=${HF_LINK}" >> $GITHUB_ENV
@@ -256,6 +267,7 @@ jobs:
             else
               ITEM_ID="$INPUT_ID"
             fi
+            echo "ACTUAL_ITEM_ID=${ITEM_ID}" >> $GITHUB_ENV
 
             mkdir -p ~/.config
             printf "[s3]\naccess = %s\nsecret = %s\n" "${IA_ACCESS_KEY}" "${IA_SECRET_KEY}" > ~/.config/ia.ini
@@ -280,13 +292,13 @@ jobs:
       - name: Workflow Summary & Notification
         if: always()
         run: |
-          ITEM_ID="${{ github.event.inputs.ia_item_id }}"
+          ITEM_ID="${ACTUAL_ITEM_ID:-${{ github.event.inputs.ia_item_id }}}"
 
           echo "=========================================="
           echo "             WORKFLOW REPORT              "
           echo "=========================================="
           
-          if [ "${{ job.status }}" == "success" ]; then
+          if [ "${GDRIVE_OK:-0}" == "1" ] || [ -n "${IA_LINK:-}" ] || [ -n "${HF_LINK:-}" ]; then
             echo "TRẠNG THÁI   : THÀNH CÔNG (SUCCESS)"
             echo "LINK GỐC     : ${{ github.event.inputs.file_url }}"
             echo "GDRIVE LINK  : ${GDRIVE_LINK:-N/A}"
@@ -303,6 +315,8 @@ jobs:
               echo "- **Link gốc (Input):** [${{ github.event.inputs.file_url }}](${{ github.event.inputs.file_url }})"
               if [ -n "${GDRIVE_LINK:-}" ]; then
                 echo "- **Google Drive:** [Xem file trên Drive](${GDRIVE_LINK})"
+              elif [ "${GDRIVE_OK:-0}" == "1" ]; then
+                echo "- **Google Drive:** Đã tải lên thư mục \`Mirror-Cloud\`"
               fi
               if [ -n "${HF_LINK:-}" ]; then
                 echo "- **Hugging Face Direct Download:** [Tải từ Hugging Face](${HF_LINK})"
