@@ -20,7 +20,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y python3-pip aria2 wget curl
+          sudo apt install -y python3-pip aria2 wget curl zip
+          pip3 install --no-cache-dir --break-system-packages gdown internetarchive huggingface_hub || \
           pip3 install --no-cache-dir gdown internetarchive huggingface_hub
 
       - name: Download file / folder (Multi-host support)
@@ -112,6 +113,7 @@ jobs:
           echo "FILE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
           echo "✅ Sẵn sàng upload: $FILE_NAME ($FILE_SIZE bytes)"
 
+
       - name: Upload to Archive.org
         continue-on-error: true
         env:
@@ -130,6 +132,7 @@ jobs:
             else
               ITEM_ID="$INPUT_ID"
             fi
+            echo "ACTUAL_ITEM_ID=${ITEM_ID}" >> $GITHUB_ENV
 
             mkdir -p ~/.config
             printf "[s3]\naccess = %s\nsecret = %s\n" "${IA_ACCESS_KEY}" "${IA_SECRET_KEY}" > ~/.config/ia.ini
@@ -165,11 +168,18 @@ jobs:
           else
             echo "Bắt đầu upload $FILE_NAME lên repo Strong568/Mirror-Cloud..."
             
-            # Sử dụng huggingface-cli chuẩn, tự động nhận HF_TOKEN từ env mà không cần truyền flag --token
-            huggingface-cli upload Strong568/Mirror-Cloud \
-              "$FILE_NAME" \
-              "$FILE_NAME" \
-              --repo-type model
+            python3 -c "
+          import os
+          from huggingface_hub import HfApi
+
+          api = HfApi(token=os.environ['HF_TOKEN'])
+          api.upload_file(
+              path_or_fileobj=os.environ['FILE_NAME'],
+              path_in_repo=os.environ['FILE_NAME'],
+              repo_id='Strong568/Mirror-Cloud',
+              repo_type='model',
+          )
+          "
 
             HF_LINK="https://huggingface.co/Strong568/Mirror-Cloud/resolve/main/${FILE_NAME}"
             echo "HF_LINK=${HF_LINK}" >> $GITHUB_ENV
@@ -180,13 +190,13 @@ jobs:
       - name: Workflow Summary & Notification
         if: always()
         run: |
-          ITEM_ID="${{ github.event.inputs.ia_item_id }}"
+          ITEM_ID="${ACTUAL_ITEM_ID:-${{ github.event.inputs.ia_item_id }}}"
 
           echo "=========================================="
           echo "             WORKFLOW REPORT              "
           echo "=========================================="
           
-          if [ "${{ job.status }}" == "success" ]; then
+          if [ -n "${IA_LINK:-}" ] || [ -n "${HF_LINK:-}" ]; then
             echo "TRẠNG THÁI   : THÀNH CÔNG (SUCCESS)"
             echo "LINK GỐC     : ${{ github.event.inputs.file_url }}"
             echo "ARCHIVE LINK : ${IA_LINK:-N/A}"
@@ -222,6 +232,6 @@ jobs:
               echo ""
               echo "- **Link gốc (Input):** [${{ github.event.inputs.file_url }}](${{ github.event.inputs.file_url }})"
               echo "- **Item ID:** \`$ITEM_ID\`"
-              echo "- *Tải file hoặc upload thất bại. Vui lòng kiểm tra lại log chi tiết ở các bước trên.*"
+              echo "- *Tải file hoặc upload lên cả 2 host đều thất bại. Vui lòng kiểm tra lại log chi tiết ở các bước trên.*"
             } >> $GITHUB_STEP_SUMMARY
           fi

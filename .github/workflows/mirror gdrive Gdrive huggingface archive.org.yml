@@ -46,7 +46,8 @@ jobs:
           sudo apt update
           sudo apt install -y python3-pip aria2 wget curl
           curl https://rclone.org/install.sh | sudo bash
-          pip3 install --no-cache-dir gdown internetarchive "huggingface_hub[cli]"
+          pip3 install --no-cache-dir --break-system-packages gdown internetarchive huggingface_hub || \
+          pip3 install --no-cache-dir gdown internetarchive huggingface_hub
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Process, Download & Upload (File-by-File / Pipeline)
@@ -112,14 +113,21 @@ jobs:
               fi
             fi
 
-            # Upload Hugging Face (Dùng python -m để bảo đảm chạy độc lập với PATH)
+            # Upload Hugging Face (Gọi trực tiếp HfApi để tránh lỗi CLI)
             if [ "$UPLOAD_HF" = "true" ] && [ -n "${HF_TOKEN:-}" ]; then
               echo "  ↳ Tải lên Hugging Face..."
-              python3 -m huggingface_hub.cli.hf upload "$HF_REPO_NAME" \
-                "$file_path" \
-                "$relative_name" \
-                --repo-type model \
-                --token "$HF_TOKEN"
+              python3 -c '
+          import sys
+          from huggingface_hub import HfApi
+
+          api = HfApi(token=sys.argv[1])
+          api.upload_file(
+              path_or_fileobj=sys.argv[2],
+              path_in_repo=sys.argv[3],
+              repo_id=sys.argv[4],
+              repo_type="model",
+          )
+          ' "$HF_TOKEN" "$file_path" "$relative_name" "$HF_REPO_NAME"
             fi
 
             # Upload Archive.org
@@ -186,16 +194,28 @@ jobs:
                 COOKIE_OPT="--cookies cookies.txt"
               fi
 
-              gdown "https://drive.google.com/uc?id=${TARGET_ID}" $COOKIE_OPT || \
-              aria2c --header="User-Agent: $USER_AGENT" \
-                     --check-certificate=false \
-                     --allow-overwrite=true \
-                     --content-disposition \
-                     -s16 -x16 -j16 \
-                     "https://drive.google.com/uc?export=download&id=${TARGET_ID}"
+              if [ "$HAS_RCLONE" -eq 1 ]; then
+                echo "🚀 Thử clone qua Rclone copyid (bypass quota)..."
+                rclone backend copyid gdrive: "$TARGET_ID" "./" || true
+              fi
+
+              if [ -z "$(find . -maxdepth 1 -type f ! -name 'cookies.txt')" ]; then
+                echo "⚡ Chạy gdown với cookie..."
+                gdown "https://drive.google.com/uc?id=${TARGET_ID}" $COOKIE_OPT || \
+                aria2c --header="User-Agent: $USER_AGENT" \
+                       --check-certificate=false \
+                       --allow-overwrite=true \
+                       --content-disposition \
+                       -s16 -x16 -j16 \
+                       "https://drive.google.com/uc?export=download&id=${TARGET_ID}"
+              fi
               cd ..
 
               SINGLE_FILE=$(find work_dir -type f ! -name "cookies.txt" | head -n 1)
+              if [ -z "$SINGLE_FILE" ]; then
+                echo "❌ Không tải được file từ Google Drive!"
+                exit 1
+              fi
               FILE_NAME=$(basename "$SINGLE_FILE")
               upload_and_cleanup_file "$SINGLE_FILE" "$FILE_NAME"
             fi
@@ -213,6 +233,10 @@ jobs:
                    "$DIRECT_PIXEL"
             cd ..
             SINGLE_FILE=$(find work_dir -type f | head -n 1)
+            if [ -z "$SINGLE_FILE" ]; then
+              echo "❌ Không tải được file từ Pixeldrain!"
+              exit 1
+            fi
             FILE_NAME=$(basename "$SINGLE_FILE")
             upload_and_cleanup_file "$SINGLE_FILE" "$FILE_NAME"
 
@@ -223,6 +247,10 @@ jobs:
             wget -c --progress=bar:force:noscroll --content-disposition "$RAW_URL"
             cd ..
             SINGLE_FILE=$(find work_dir -type f | head -n 1)
+            if [ -z "$SINGLE_FILE" ]; then
+              echo "❌ Không tải được file từ Direct Link!"
+              exit 1
+            fi
             FILE_NAME=$(basename "$SINGLE_FILE")
             upload_and_cleanup_file "$SINGLE_FILE" "$FILE_NAME"
           fi
